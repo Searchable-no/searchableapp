@@ -1,0 +1,7 @@
+I want you to help me create my search functionality for my application. The purpose of the search is to create a powerfull search engine for business data. The search should be fast, accurate and scalable. 
+
+In the application users should have the option to connect their data sources to the application. The data sources can be Microsoft 365 (SharePoint, Teams, Chats, Outlook emails etc), Google Workspace (Gmail, Calendar, Drive, Docs, Sheets, Slides, etc). The connections should be done through OAuth and use the users Microsoft or Google account to connect and inherit the permissions of the user.
+
+The connection part should be done trough the settings page (This is not setup yet). 
+
+The search page is already created and is located in the /app/search/page.tsx file. Now it just uses dummy data.
