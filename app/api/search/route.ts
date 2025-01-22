@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { searchMicrosoft } from '@/lib/microsoft'
-import { searchGoogle } from '@/lib/google'
 import { prisma } from '@/lib/prisma'
+import { semanticSearch } from '@/lib/embeddings'
 
 interface SearchResult {
   id: string
   title: string
   content?: string
-  url?: string
-  lastModified: string
+  url?: string | null
+  lastModified: Date
   type: 'email' | 'document'
   source: 'google' | 'microsoft'
+  similarity?: number
+}
+
+interface GroupedResults {
+  [key: string]: SearchResult[]
 }
 
 export async function GET(request: NextRequest) {
@@ -27,10 +31,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Get the user's email from the sidebar
     const userEmail = 'Arne@searchable.no' // This should be replaced with actual auth later
 
-    // Get the user from the database using case-insensitive search
     const user = await prisma.user.findFirst({
       where: {
         email: {
@@ -47,30 +49,15 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const results: SearchResult[] = []
+    // Perform semantic search
+    let results = await semanticSearch(user.id, query)
 
-    if (source === 'all' || source === 'microsoft') {
-      try {
-        const microsoftResults = await searchMicrosoft(user.id, query)
-        results.push(...(microsoftResults as SearchResult[]))
-      } catch (error) {
-        console.error('Microsoft search error:', error)
-        // Continue with other sources even if Microsoft search fails
-      }
-    }
-
-    if (source === 'all' || source === 'google') {
-      try {
-        const googleResults = await searchGoogle(user.id, query)
-        results.push(...(googleResults as SearchResult[]))
-      } catch (error) {
-        console.error('Google search error:', error)
-        // Continue with other sources even if Google search fails
-      }
+    // Filter by source if specified
+    if (source !== 'all') {
+      results = results.filter(result => result.source === source)
     }
 
     // Filter by date if specified
-    let filteredResults = results
     if (dateRange !== 'all') {
       const now = new Date()
       const cutoffDate = new Date()
@@ -87,35 +74,33 @@ export async function GET(request: NextRequest) {
           break
       }
 
-      filteredResults = results.filter(
+      results = results.filter(
         result => new Date(result.lastModified) >= cutoffDate
       )
     }
 
-    // Sort by last modified date
-    filteredResults.sort((a, b) => 
-      new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()
-    )
-
     // Group results by source and type
-    const groupedResults = filteredResults.reduce((acc, result) => {
+    const groupedResults = results.reduce((acc: GroupedResults, result) => {
       const category = `${result.source}-${result.type}`
       if (!acc[category]) {
         acc[category] = []
       }
       acc[category].push(result)
       return acc
-    }, {} as Record<string, SearchResult[]>)
+    }, {})
 
     // Format the response with categories
     const formattedResults = {
-      totalCount: filteredResults.length,
+      totalCount: results.length,
       categories: Object.entries(groupedResults).map(([category, items]) => ({
         category,
         source: category.split('-')[0],
         type: category.split('-')[1],
         count: items.length,
-        items
+        items: items.map(item => ({
+          ...item,
+          similarity: item.similarity ? Math.round(item.similarity * 100) / 100 : undefined
+        }))
       })),
       query,
       dateRange

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { indexMicrosoftContent } from '@/lib/microsoft'
 
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID
 const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET
@@ -97,7 +98,26 @@ export async function GET(request: NextRequest) {
 
     console.log('Connection upserted:', connection)
 
-    return NextResponse.redirect(`${baseUrl}/settings?success=true`)
+    try {
+      // Start content indexing and wait for it to complete
+      console.log('Starting content indexing for user:', user.id)
+      console.log('User email:', userEmail)
+      console.log('Access token available:', !!tokenData.access_token)
+      
+      await indexMicrosoftContent(user.id)
+      console.log('Indexing completed successfully')
+      
+      return NextResponse.redirect(
+        `${baseUrl}/settings?success=true&indexed=true`
+      )
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown indexing error'
+      console.error('Indexing error:', error)
+      // Still redirect but with error flag
+      return NextResponse.redirect(
+        `${baseUrl}/settings?success=true&indexed=false&error=${encodeURIComponent(errorMessage)}`
+      )
+    }
   } catch (error) {
     console.error('Error exchanging code for token:', error)
     return NextResponse.redirect(`${baseUrl}/settings?error=token_exchange_failed`)

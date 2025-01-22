@@ -3,11 +3,13 @@
 
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  extensions = [vector]
 }
 
 model User {
@@ -15,6 +17,7 @@ model User {
   email         String    @unique
   name          String?
   connections   Connection[]
+  indexedContent IndexedContent[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 }
@@ -34,18 +37,22 @@ model Connection {
   @@index([userId])
 }
 
-model SearchIndex {
+model IndexedContent {
   id            String    @id @default(cuid())
-  itemId        String    // Original item ID from the source
+  sourceId      String    // Original ID from Microsoft/Google
   title         String
   content       String    @db.Text
-  source        String    // "microsoft" or "google"
-  type          String    // "document", "email", etc.
   url           String?
+  type          String    // 'email' | 'document'
+  source        String    // 'microsoft' | 'google'
   lastModified  DateTime
+  embedding     Unsupported("vector(1536)")?
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  @@index([source, type])
-  @@index([lastModified])
+  @@unique([userId, sourceId], name: "userId_sourceId")
+  @@index([userId])
+  @@index([sourceId])
 } 

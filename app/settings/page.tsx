@@ -59,9 +59,13 @@ export default function SettingsPage() {
         const response = await fetch("/api/auth/microsoft/disconnect", {
           method: "POST",
         });
+        const data = await response.json();
+
         if (!response.ok) {
-          throw new Error("Failed to disconnect");
+          console.error("Disconnect error response:", data);
+          throw new Error(data.details || "Failed to disconnect");
         }
+
         await fetchConnectionStatus();
         toast.success("Successfully disconnected from Microsoft 365");
       } catch (error) {
