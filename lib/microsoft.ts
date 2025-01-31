@@ -3,6 +3,10 @@ import { indexContent } from './embeddings'
 
 const GRAPH_API_ENDPOINT = 'https://graph.microsoft.com/v1.0'
 
+// Constants for subscription management
+const NOTIFICATION_URL = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/microsoft`
+const SUBSCRIPTION_EXPIRATION_DAYS = 2 // Microsoft limits to 3 days max
+
 interface GraphSearchHit {
   hitId: string
   rank: number
@@ -342,4 +346,152 @@ function processSearchResults(results: (GraphSearchHit | GraphSearchResult)[]) {
       source: 'microsoft',
     }
   })
+}
+
+export async function createChangeNotificationSubscriptions(userId: string, accessToken: string) {
+  console.log('Creating Microsoft Graph change notification subscriptions')
+  
+  const expirationDate = new Date()
+  expirationDate.setDate(expirationDate.getDate() + SUBSCRIPTION_EXPIRATION_DAYS)
+
+  const subscriptions = [
+    // OneDrive/SharePoint files subscription
+    {
+      changeType: 'created,updated',
+      notificationUrl: NOTIFICATION_URL,
+      resource: '/users/me/drive/root',
+      expirationDateTime: expirationDate.toISOString(),
+      clientState: userId, // Used to identify the user when receiving notifications
+      includeResourceData: false
+    },
+    // Outlook messages subscription
+    {
+      changeType: 'created,updated',
+      notificationUrl: NOTIFICATION_URL,
+      resource: '/users/me/messages',
+      expirationDateTime: expirationDate.toISOString(),
+      clientState: userId,
+      includeResourceData: false
+    }
+  ]
+
+  try {
+    const results = await Promise.all(
+      subscriptions.map(subscription =>
+        fetch(`${GRAPH_API_ENDPOINT}/subscriptions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(subscription)
+        }).then(res => res.json())
+      )
+    )
+
+    console.log('Created subscriptions:', results)
+    
+    // Store subscription IDs in database for renewal
+    await prisma.connection.update({
+      where: {
+        userId_provider: {
+          userId,
+          provider: 'microsoft'
+        }
+      },
+      data: {
+        metadata: {
+          subscriptions: results.map(sub => ({
+            id: sub.id,
+            expirationDateTime: sub.expirationDateTime
+          }))
+        }
+      }
+    })
+
+    return results
+  } catch (error) {
+    console.error('Error creating subscriptions:', error)
+    throw error
+  }
+}
+
+export async function renewSubscriptions(userId: string, accessToken: string) {
+  console.log('Renewing Microsoft Graph subscriptions')
+  
+  try {
+    const connection = await prisma.connection.findFirst({
+      where: {
+        userId,
+        provider: 'microsoft'
+      }
+    })
+
+    if (!connection?.metadata?.subscriptions) {
+      console.log('No subscriptions found to renew')
+      return await createChangeNotificationSubscriptions(userId, accessToken)
+    }
+
+    const expirationDate = new Date()
+    expirationDate.setDate(expirationDate.getDate() + SUBSCRIPTION_EXPIRATION_DAYS)
+
+    const results = await Promise.all(
+      connection.metadata.subscriptions.map(async (sub: any) => {
+        try {
+          const response = await fetch(
+            `${GRAPH_API_ENDPOINT}/subscriptions/${sub.id}`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                expirationDateTime: expirationDate.toISOString()
+              })
+            }
+          )
+
+          if (!response.ok) {
+            throw new Error(`Failed to renew subscription ${sub.id}`)
+          }
+
+          return await response.json()
+        } catch (error) {
+          console.error(`Error renewing subscription ${sub.id}:`, error)
+          // If renewal fails, create a new subscription
+          return null
+        }
+      })
+    )
+
+    // Filter out failed renewals and update database
+    const validSubscriptions = results.filter(Boolean)
+    await prisma.connection.update({
+      where: {
+        userId_provider: {
+          userId,
+          provider: 'microsoft'
+        }
+      },
+      data: {
+        metadata: {
+          subscriptions: validSubscriptions.map(sub => ({
+            id: sub.id,
+            expirationDateTime: sub.expirationDateTime
+          }))
+        }
+      }
+    })
+
+    // If any renewals failed, create new subscriptions
+    if (validSubscriptions.length < connection.metadata.subscriptions.length) {
+      await createChangeNotificationSubscriptions(userId, accessToken)
+    }
+
+    return validSubscriptions
+  } catch (error) {
+    console.error('Error renewing subscriptions:', error)
+    throw error
+  }
 } 

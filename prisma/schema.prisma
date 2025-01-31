@@ -3,13 +3,11 @@
 
 generator client {
   provider = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  extensions = [vector]
 }
 
 model User {
@@ -46,7 +44,6 @@ model IndexedContent {
   type          String    // 'email' | 'document'
   source        String    // 'microsoft' | 'google'
   lastModified  DateTime
-  embedding     Unsupported("vector(1536)")?
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId        String
   createdAt     DateTime  @default(now())

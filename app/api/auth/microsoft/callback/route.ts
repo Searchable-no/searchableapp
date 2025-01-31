@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { indexMicrosoftContent } from '@/lib/microsoft'
+import { indexMicrosoftContent, createChangeNotificationSubscriptions } from '@/lib/microsoft'
 
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID
 const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET
@@ -99,6 +99,10 @@ export async function GET(request: NextRequest) {
     console.log('Connection upserted:', connection)
 
     try {
+      // Create change notification subscriptions
+      await createChangeNotificationSubscriptions(user.id, tokenData.access_token)
+      console.log('Created change notification subscriptions')
+
       // Start content indexing and wait for it to complete
       console.log('Starting content indexing for user:', user.id)
       console.log('User email:', userEmail)
