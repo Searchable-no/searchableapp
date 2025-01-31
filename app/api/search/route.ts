@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { semanticSearch } from '@/lib/embeddings'
+import { getEmbedding, normalizeNorwegianText } from '@/lib/embeddings'
+import { search } from '@/lib/pinecone'
 
 interface SearchResult {
   id: string
@@ -49,13 +50,29 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Perform semantic search
-    let results = await semanticSearch(user.id, query)
+    // Normalize the query for better Norwegian language support
+    const normalizedQuery = normalizeNorwegianText(query)
+    
+    // Get embedding for the normalized query
+    const queryEmbedding = await getEmbedding(normalizedQuery)
 
-    // Filter by source if specified
-    if (source !== 'all') {
-      results = results.filter(result => result.source === source)
-    }
+    // Perform semantic search
+    const searchResults = await search({
+      vector: queryEmbedding,
+      query: normalizedQuery,
+      topK: 20,
+      filter: {
+        userId: user.id,
+        ...(source !== 'all' ? { source } : {})
+      }
+    })
+
+    // Transform Pinecone results to our format
+    let results = searchResults.map(result => ({
+      id: result.id,
+      ...result.metadata,
+      similarity: result.score
+    })) as SearchResult[]
 
     // Filter by date if specified
     if (dateRange !== 'all') {
@@ -64,13 +81,13 @@ export async function GET(request: NextRequest) {
       
       switch (dateRange) {
         case 'recent':
-          cutoffDate.setDate(now.getDate() - 7) // Last 7 days
+          cutoffDate.setDate(now.getDate() - 7)
           break
         case 'last-week':
-          cutoffDate.setDate(now.getDate() - 14) // Last 14 days
+          cutoffDate.setDate(now.getDate() - 14)
           break
         case 'last-month':
-          cutoffDate.setMonth(now.getMonth() - 1) // Last 30 days
+          cutoffDate.setMonth(now.getMonth() - 1)
           break
       }
 

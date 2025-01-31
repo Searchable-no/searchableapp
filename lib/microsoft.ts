@@ -40,6 +40,21 @@ interface GraphSearchResult {
   }
 }
 
+interface DriveItem {
+  id: string;
+  name?: string;
+  webUrl?: string;
+  lastModifiedDateTime: string;
+  parentReference: {
+    driveId: string;
+  };
+  content?: string;
+}
+
+interface SearchHit {
+  resource: DriveItem;
+}
+
 export async function indexMicrosoftContent(userId: string) {
   console.log(`Starting Microsoft content indexing for user ${userId}`)
   
@@ -87,6 +102,64 @@ export async function indexMicrosoftContent(userId: string) {
   }
 }
 
+async function getFileContent(accessToken: string, driveId: string, itemId: string): Promise<string> {
+  try {
+    // First try to get text content directly
+    const response = await fetch(
+      `${GRAPH_API_ENDPOINT}/drives/${driveId}/items/${itemId}/content`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Accept': 'text/plain,application/pdf',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Failed to fetch file content: ${response.statusText}`);
+      return '';
+    }
+
+    const contentType = response.headers.get('content-type');
+    
+    if (contentType?.includes('text/plain')) {
+      return await response.text();
+    } else if (contentType?.includes('application/pdf')) {
+      // For PDFs, we need to use the preview API to get text content
+      const previewResponse = await fetch(
+        `${GRAPH_API_ENDPOINT}/drives/${driveId}/items/${itemId}/preview`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!previewResponse.ok) {
+        console.error(`Failed to get preview: ${previewResponse.statusText}`);
+        return '';
+      }
+
+      const previewData = await previewResponse.json();
+      if (previewData.getUrl) {
+        // Fetch the preview content
+        const previewContentResponse = await fetch(previewData.getUrl);
+        if (previewContentResponse.ok) {
+          const previewContent = await previewContentResponse.text();
+          return previewContent;
+        }
+      }
+    }
+
+    return '';
+  } catch (error) {
+    console.error('Error getting file content:', error);
+    return '';
+  }
+}
+
 async function indexFiles(accessToken: string, userId: string) {
   console.log('Making request to Microsoft Graph API for files...')
   console.log(`Using access token: ${accessToken.substring(0, 20)}...`)
@@ -107,6 +180,14 @@ async function indexFiles(accessToken: string, userId: string) {
               query: {
                 queryString: '*',
               },
+              fields: [
+                'id',
+                'name',
+                'webUrl',
+                'lastModifiedDateTime',
+                'parentReference',
+                'file'
+              ],
               from: 0,
               size: 25,
             },
@@ -131,7 +212,7 @@ async function indexFiles(accessToken: string, userId: string) {
       return 0
     }
 
-    const hits = data.value[0].hitsContainers[0].hits
+    const hits = data.value[0].hitsContainers[0].hits as SearchHit[]
     console.log(`Found ${hits.length} files to index`)
 
     for (const hit of hits) {
@@ -139,16 +220,23 @@ async function indexFiles(accessToken: string, userId: string) {
         const item = hit.resource
         console.log(`Processing file: ${item.name} (${item.id})`)
         
-        if (!item.content && !item.webUrl) {
-          console.log(`Skipping file ${item.id} - no content or URL available`)
+        if (!item.webUrl) {
+          console.log(`Skipping file ${item.id} - no URL available`)
           continue
         }
+
+        // Get the actual file content
+        const fileContent = await getFileContent(
+          accessToken,
+          item.parentReference.driveId,
+          item.id
+        );
 
         await indexContent(
           userId,
           item.id,
           item.name || 'Untitled',
-          item.content || '',
+          fileContent || item.content || '',
           item.webUrl || null,
           'document',
           'microsoft',

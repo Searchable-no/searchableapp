@@ -13,20 +13,35 @@ type PineconeMetadata = {
   sourceId: string
   title: string
   content: string
+  normalizedContent: string
   url: string // Store null as empty string for Pinecone compatibility
   type: 'email' | 'document'
   source: 'microsoft' | 'google'
   lastModified: string
 }
 
-export async function generateEmbedding(text: string): Promise<number[]> {
+export async function getEmbedding(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
     model: "text-embedding-3-small",
     input: text,
     encoding_format: "float",
+    dimensions: 1536,
   })
   
   return response.data[0].embedding
+}
+
+// Helper function to normalize Norwegian text
+export function normalizeNorwegianText(text: string): string {
+  // Convert common Norwegian characters to their base form for better matching
+  return text
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[æ]/g, 'ae')
+    .replace(/[ø]/g, 'o')
+    .replace(/[å]/g, 'a')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export async function indexContent(
@@ -45,7 +60,11 @@ export async function indexContent(
     // Generate embedding for the content
     console.log('Generating embedding...')
     const combinedText = `${title}\n${content}`.slice(0, 8000) // Limit text length
-    const embedding = await generateEmbedding(combinedText)
+    
+    // Store both original and normalized versions
+    const normalizedText = normalizeNorwegianText(combinedText)
+    const embedding = await getEmbedding(normalizedText)
+    
     console.log('Generated embedding of length:', embedding.length)
 
     // Store in Pinecone with all metadata
@@ -55,6 +74,7 @@ export async function indexContent(
       sourceId,
       title,
       content,
+      normalizedContent: normalizedText, // Store normalized version for better search
       url: url || '', // Convert null to empty string for Pinecone
       type,
       source,
@@ -101,7 +121,7 @@ interface SearchResult {
 
 export async function semanticSearch(userId: string, query: string, limit = 10): Promise<SearchResult[]> {
   // Generate embedding for the search query
-  const queryEmbedding = await generateEmbedding(query)
+  const queryEmbedding = await getEmbedding(query)
 
   // Search vectors in Pinecone
   const searchResponse = await pineconeIndex.query({
