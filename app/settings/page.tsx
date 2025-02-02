@@ -6,6 +6,7 @@ import { SidebarInset } from "@/components/ui/sidebar";
 import { Box, Mail } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { useSession } from "@/lib/session";
 
 interface ConnectionStatus {
   microsoft: boolean;
@@ -18,11 +19,21 @@ export default function SettingsPage() {
     google: false,
   });
   const searchParams = useSearchParams();
+  const { session, loading: sessionLoading } = useSession();
 
   // Fetch connection status
   const fetchConnectionStatus = async () => {
+    if (!session?.user?.email) {
+      console.log("No user email available");
+      return;
+    }
+
     try {
-      const response = await fetch("/api/connections/status");
+      const response = await fetch(
+        `/api/connections/status?email=${encodeURIComponent(
+          session.user.email
+        )}`
+      );
       if (!response.ok) {
         throw new Error("Failed to fetch connection status");
       }
@@ -35,8 +46,10 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    fetchConnectionStatus();
-  }, []); // Fetch on mount
+    if (session?.user?.email && !sessionLoading) {
+      fetchConnectionStatus();
+    }
+  }, [session, sessionLoading]); // Fetch when session changes
 
   useEffect(() => {
     const error = searchParams.get("error");
@@ -53,24 +66,44 @@ export default function SettingsPage() {
   }, [searchParams]);
 
   const handleMicrosoftConnect = async () => {
+    if (sessionLoading) {
+      toast.error("Please wait while we load your session");
+      return;
+    }
+
+    if (!session?.user?.email) {
+      toast.error("Please sign in to connect your account");
+      return;
+    }
+
     if (status.microsoft) {
       // Handle disconnect
       try {
+        console.log("Attempting to disconnect with email:", session.user.email);
+
         const response = await fetch("/api/auth/microsoft/disconnect", {
           method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ email: session.user.email }),
         });
-        const data = await response.json();
 
         if (!response.ok) {
+          const data = await response.json();
           console.error("Disconnect error response:", data);
-          throw new Error(data.details || "Failed to disconnect");
+          throw new Error(data.error || "Failed to disconnect");
         }
 
         await fetchConnectionStatus();
         toast.success("Successfully disconnected from Microsoft 365");
       } catch (error) {
         console.error("Error disconnecting:", error);
-        toast.error("Failed to disconnect from Microsoft 365");
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to disconnect from Microsoft 365"
+        );
       }
     } else {
       window.location.href = "/api/auth/microsoft";

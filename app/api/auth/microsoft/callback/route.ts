@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { supabaseAdmin } from '@/lib/supabase-server'
 import { indexMicrosoftContent, createChangeNotificationSubscriptions } from '@/lib/microsoft'
 
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID
 const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/microsoft/callback`
-
 const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
 export async function GET(request: NextRequest) {
@@ -55,75 +54,95 @@ export async function GET(request: NextRequest) {
 
     // Get user info from the id token
     const idToken = JSON.parse(Buffer.from(tokenData.id_token.split('.')[1], 'base64').toString())
-    const userEmail = idToken.email
+    const userEmail = idToken.email.toLowerCase()
     const userName = idToken.name
 
     console.log('User info from token:', { userEmail, userName })
 
-    // Create or update user
-    const user = await prisma.user.upsert({
-      where: { email: userEmail },
-      create: {
-        email: userEmail,
-        name: userName,
-      },
-      update: {
-        name: userName,
-      },
-    })
+    // Check if user exists
+    const { data: existingUser, error: userError } = await supabaseAdmin
+      .from('users')
+      .select()
+      .eq('email', userEmail)
+      .single()
 
-    console.log('User upserted:', user)
+    if (userError) {
+      console.log('Error checking for existing user:', userError)
+    }
 
-    // Create or update connection
-    const connection = await prisma.connection.upsert({
-      where: {
-        userId_provider: {
-          userId: user.id,
+    let user = existingUser
+
+    if (!user) {
+      // Create new user if doesn't exist
+      const { data: newUser, error: createError } = await supabaseAdmin
+        .from('users')
+        .insert([
+          {
+            email: userEmail,
+            name: userName,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single()
+
+      if (createError) {
+        console.error('Error creating new user:', createError)
+        return NextResponse.redirect(
+          new URL(`/settings?error=user_creation_failed`, baseUrl)
+        )
+      }
+
+      console.log('Created new user:', newUser)
+      user = newUser
+    }
+
+    // Update or create Microsoft connection
+    const { error: connectionError } = await supabaseAdmin
+      .from('connections')
+      .upsert(
+        {
+          user_id: user.id,
           provider: 'microsoft',
+          access_token: tokenData.access_token,
+          refresh_token: tokenData.refresh_token,
+          expires_at: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
+          metadata: {
+            scope: tokenData.scope,
+          },
+          updated_at: new Date().toISOString(),
         },
-      },
-      create: {
-        provider: 'microsoft',
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expiresAt: new Date(Date.now() + tokenData.expires_in * 1000),
-        userId: user.id,
-      },
-      update: {
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expiresAt: new Date(Date.now() + tokenData.expires_in * 1000),
-      },
-    })
+        {
+          onConflict: 'user_id,provider',
+        }
+      )
 
-    console.log('Connection upserted:', connection)
+    if (connectionError) {
+      console.error('Error upserting connection:', connectionError)
+      return NextResponse.redirect(
+        new URL(`/settings?error=connection_update_failed`, baseUrl)
+      )
+    }
 
     try {
       // Create change notification subscriptions
       await createChangeNotificationSubscriptions(user.id, tokenData.access_token)
       console.log('Created change notification subscriptions')
 
-      // Start content indexing and wait for it to complete
-      console.log('Starting content indexing for user:', user.id)
-      console.log('User email:', userEmail)
-      console.log('Access token available:', !!tokenData.access_token)
+      // Start content indexing in the background
+      indexMicrosoftContent(user.id)
+        .catch(error => console.error('Error starting content indexing:', error))
       
-      await indexMicrosoftContent(user.id)
-      console.log('Indexing completed successfully')
-      
-      return NextResponse.redirect(
-        `${baseUrl}/settings?success=true&indexed=true`
-      )
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown indexing error'
-      console.error('Indexing error:', error)
-      // Still redirect but with error flag
-      return NextResponse.redirect(
-        `${baseUrl}/settings?success=true&indexed=false&error=${encodeURIComponent(errorMessage)}`
-      )
+      console.log('Started content indexing')
+    } catch (error) {
+      console.error('Error in post-connection setup:', error)
+      // Continue with the flow even if subscriptions or indexing fails
     }
+
+    return NextResponse.redirect(`${baseUrl}/settings?success=true`)
   } catch (error) {
-    console.error('Error exchanging code for token:', error)
-    return NextResponse.redirect(`${baseUrl}/settings?error=token_exchange_failed`)
+    console.error('Error in Microsoft callback:', error)
+    return NextResponse.redirect(`${baseUrl}/settings?error=unexpected_error`)
   }
 } 

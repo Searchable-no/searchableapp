@@ -54,7 +54,14 @@ export async function indexContent(
   source: 'microsoft' | 'google',
   lastModified: Date
 ) {
-  console.log(`Indexing content: ${title} (${sourceId})`)
+  console.log('Starting indexing with params:', {
+    userId,
+    sourceId,
+    title,
+    type,
+    source,
+    lastModified: lastModified.toISOString()
+  })
   
   try {
     // Generate embedding for the content
@@ -67,14 +74,13 @@ export async function indexContent(
     
     console.log('Generated embedding of length:', embedding.length)
 
-    // Store in Pinecone with all metadata
-    console.log('Storing in Pinecone...')
+    // Store in Pinecone with truncated metadata
     const metadata: PineconeMetadata = {
       userId,
       sourceId,
-      title,
-      content,
-      normalizedContent: normalizedText, // Store normalized version for better search
+      title: title.slice(0, 1000), // Limit title length
+      content: content.slice(0, 20000), // Limit content length to stay under 40KB
+      normalizedContent: normalizedText.slice(0, 8000), // Limit normalized content
       url: url || '', // Convert null to empty string for Pinecone
       type,
       source,
@@ -86,6 +92,9 @@ export async function indexContent(
       values: embedding,
       metadata
     }
+    
+    console.log('Upserting to Pinecone with ID:', upsertRequest.id)
+    console.log('Metadata:', metadata)
     
     await pineconeIndex.upsert([upsertRequest])
     console.log('Successfully stored in Pinecone')

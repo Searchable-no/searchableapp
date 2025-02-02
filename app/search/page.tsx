@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Search, X, Mail, FileText, Calendar } from "lucide-react";
+import { Search, X, Mail, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -12,6 +12,15 @@ import {
 } from "@/components/ui/select";
 import { motion, AnimatePresence } from "framer-motion";
 import debounce from "lodash/debounce";
+import { useSession } from "@/lib/session";
+import React from "react";
+
+interface AutocompleteResult {
+  title: string;
+  url: string;
+  type: string;
+  source: string;
+}
 
 interface SearchResult {
   id: string;
@@ -21,7 +30,7 @@ interface SearchResult {
   lastModified: string;
   type: "email" | "document";
   source: "microsoft" | "google";
-  similarity?: number;
+  score: number;
 }
 
 interface SearchCategory {
@@ -57,68 +66,6 @@ const sourceColors = {
   },
 };
 
-// Helper function to decode URL-encoded content
-const decodeContent = (content: string) => {
-  try {
-    return decodeURIComponent(content)
-      .replace(/%20/g, " ")
-      .replace(/%2F/g, "/")
-      .replace(/%3A/g, ":")
-      .replace(/%2E/g, ".")
-      .replace(/%2D/g, "-")
-      .replace(/%5F/g, "_")
-      .replace(/%25/g, "%");
-  } catch {
-    // If decoding fails, return original content
-    return content;
-  }
-};
-
-// Helper function to get a clean filename
-const getCleanFilename = (url: string) => {
-  try {
-    const filename = new URL(url).pathname.split("/").pop() || "";
-    return decodeContent(filename);
-  } catch {
-    // If URL parsing fails, return the last part of the path
-    return url.split("/").pop() || url;
-  }
-};
-
-const cleanHtmlContent = (html: string): string => {
-  try {
-    // First, try to extract content from HTML body if present
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    const content = bodyMatch ? bodyMatch[1] : html;
-
-    // Remove all HTML tags
-    let cleaned = content.replace(/<[^>]+>/g, " ");
-
-    // Remove multiple spaces, newlines, and special characters
-    cleaned = cleaned
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/&#[0-9]+;/g, "")
-      .replace(/&[a-z]+;/g, "")
-      .replace(/\u200B/g, "") // Remove zero-width spaces
-      .replace(/\u00A0/g, " ") // Replace non-breaking spaces with regular spaces
-      .trim();
-
-    // Decode HTML entities
-    cleaned = cleaned
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'");
-
-    return cleaned;
-  } catch (error) {
-    console.error("Error cleaning HTML content:", error);
-    return html; // Return original content if cleaning fails
-  }
-};
-
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("all");
@@ -133,6 +80,11 @@ export default function SearchPage() {
   });
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const {
+    session,
+    loading: sessionLoading,
+    error: sessionError,
+  } = useSession();
 
   useEffect(() => {
     const handleResize = () => {
@@ -151,81 +103,106 @@ export default function SearchPage() {
 
   const fetchSuggestions = useCallback(
     debounce(async (input: string) => {
-      if (!input.trim()) {
-        setSuggestions([]);
-        return;
-      }
+      if (!input.trim() || !session?.user?.id) return;
 
       try {
-        const url = `${
-          window.location.origin
-        }/api/search/autocomplete?q=${encodeURIComponent(input)}`;
-        const response = await fetch(url);
+        const response = await fetch(
+          `/api/search/autocomplete?q=${encodeURIComponent(
+            input
+          )}&userId=${encodeURIComponent(session.user.id)}`
+        );
         if (!response.ok) {
           throw new Error("Failed to fetch suggestions");
         }
         const data = await response.json();
-        setSuggestions(data.suggestions || []);
+        setSuggestions(
+          data.results.map((result: AutocompleteResult) => result.title)
+        );
+        setShowSuggestions(true);
       } catch (error) {
         console.error("Error fetching suggestions:", error);
-        setSuggestions([]);
       }
     }, 300),
-    []
+    [session]
   );
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    console.log("Input changed to:", value);
     setQuery(value);
     if (value.trim()) {
-      setShowSuggestions(true);
       fetchSuggestions(value);
     } else {
-      setShowSuggestions(false);
       setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSuggestions || suggestions.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedSuggestionIndex((prev) =>
+        prev < suggestions.length - 1 ? prev + 1 : prev
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : prev));
+    } else if (e.key === "Enter" && selectedSuggestionIndex >= 0) {
+      e.preventDefault();
+      setQuery(suggestions[selectedSuggestionIndex]);
+      setShowSuggestions(false);
+      handleSearch();
     }
   };
 
   const handleSuggestionClick = (suggestion: string) => {
     setQuery(suggestion);
     setShowSuggestions(false);
-    setSuggestions([]);
     handleSearch();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (
-        showSuggestions &&
-        suggestions.length > 0 &&
-        selectedSuggestionIndex >= 0
-      ) {
-        handleSuggestionClick(suggestions[selectedSuggestionIndex]);
-      } else if (query.trim()) {
-        handleSearch();
+  const handleClearInput = () => {
+    setQuery("");
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setResults({
+      totalCount: 0,
+      categories: [],
+      query: "",
+      dateRange: "all",
+    });
+  };
+
+  const handleSearch = async () => {
+    if (!query.trim() || !session?.user?.id) return;
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(
+        `${window.location.origin}/api/search?q=${encodeURIComponent(
+          query
+        )}&userId=${encodeURIComponent(
+          session.user.id
+        )}&source=${source}&date=${dateRange}`
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Search failed");
       }
-      return;
+
+      setResults(data);
+    } catch (error) {
+      console.error("Search error:", error);
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    if (!showSuggestions || !suggestions.length) return;
-
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        setSelectedSuggestionIndex((prev) =>
-          prev < suggestions.length - 1 ? prev + 1 : prev
-        );
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : -1));
-        break;
-      case "Escape":
-        setShowSuggestions(false);
-        setSelectedSuggestionIndex(-1);
-        break;
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !showSuggestions) {
+      handleSearch();
     }
   };
 
@@ -256,162 +233,41 @@ export default function SearchPage() {
     return () => document.removeEventListener("click", handleClickOutside);
   }, []);
 
-  const handleSearch = async () => {
-    if (!query.trim()) return;
-
-    setIsLoading(true);
-    try {
-      const response = await fetch(
-        `${window.location.origin}/api/search?q=${encodeURIComponent(
-          query
-        )}&source=${source}&date=${dateRange}`
-      );
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Search failed");
-      }
-
-      setResults({
-        ...data,
-        query,
-        dateRange,
-      });
-    } catch (error) {
-      console.error("Search error:", error);
-      // You might want to show an error message to the user here
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const renderSourceBadge = (source: string, type: string) => {
-    const Icon = sourceIcons[type as keyof typeof sourceIcons];
-    const colorClasses = sourceColors[source as keyof typeof sourceColors];
-
+  // Show loading state while session is being fetched
+  if (sessionLoading) {
     return (
-      <div className="flex items-center gap-2">
-        <span
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${colorClasses.badge}`}
-        >
-          <span className={`p-1 rounded-full ${colorClasses.icon}`}>
-            {Icon && <Icon className="h-3 w-3" />}
-          </span>
-          {source === "microsoft" && type === "email"
-            ? "Outlook"
-            : source === "microsoft" && type === "document"
-            ? "SharePoint"
-            : source === "google" && type === "email"
-            ? "Gmail"
-            : "Google Drive"}
-        </span>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <span className="text-gray-600">Loading...</span>
+        </div>
       </div>
     );
-  };
+  }
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - date.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 1) {
-      return "I går";
-    } else if (diffDays <= 7) {
-      return `${diffDays} dager siden`;
-    } else {
-      return date.toLocaleDateString("no-NB", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-    }
-  };
-
-  const highlightContentMatches = (content: string, searchQuery: string) => {
-    if (!searchQuery) return content;
-
-    // Split search query into words
-    const searchTerms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-
-    // Create a regex pattern that matches any of the search terms
-    const pattern = new RegExp(`(${searchTerms.join("|")})`, "gi");
-
-    // Split content at matches
-    const parts = content.split(pattern);
-
+  // Show error state if session loading failed
+  if (sessionError) {
     return (
-      <>
-        {parts.map((part, i) => {
-          // Check if this part matches any search term
-          const isMatch = searchTerms.some(
-            (term) => part.toLowerCase() === term.toLowerCase()
-          );
-
-          return isMatch ? (
-            <span key={i} className="bg-yellow-100 text-yellow-900 font-medium">
-              {part}
-            </span>
-          ) : (
-            part
-          );
-        })}
-      </>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-red-600 mb-2">
+            Error loading session
+          </h2>
+          <p className="text-gray-600">{sessionError.message}</p>
+        </div>
+      </div>
     );
-  };
-
-  const getContentPreview = (content: string, query: string, type: string) => {
-    // Decode and clean the content first
-    const decodedContent =
-      type === "email" ? cleanHtmlContent(content) : decodeContent(content);
-
-    // Split search query into words
-    const searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
-
-    // Find the first matching term position
-    let bestMatchIndex = -1;
-    let bestMatchTerm = "";
-
-    searchTerms.forEach((term) => {
-      const index = decodedContent.toLowerCase().indexOf(term);
-      if (index !== -1 && (bestMatchIndex === -1 || index < bestMatchIndex)) {
-        bestMatchIndex = index;
-        bestMatchTerm = term;
-      }
-    });
-
-    if (bestMatchIndex === -1) {
-      // If no match found, return first 300 characters
-      const preview = decodedContent.slice(0, 300);
-      return highlightContentMatches(preview, query);
-    }
-
-    // Get a window of text around the match
-    const contextSize = 200;
-    const start = Math.max(0, bestMatchIndex - contextSize);
-    const end = Math.min(
-      decodedContent.length,
-      bestMatchIndex + bestMatchTerm.length + contextSize
-    );
-
-    // Add ellipsis if needed
-    const prefix = start > 0 ? "... " : "";
-    const suffix = end < decodedContent.length ? " ..." : "";
-
-    const preview = prefix + decodedContent.slice(start, end) + suffix;
-    return highlightContentMatches(preview, query);
-  };
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Hero Section - Only show when no search results */}
+    <div className="min-h-screen bg-gray-50 w-full">
+      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        {/* Hero Section - Only show when no results */}
         {!results.totalCount && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="pt-32 pb-24 text-center"
+            className="text-center py-16 sm:py-20"
           >
             <h1 className="text-6xl sm:text-7xl font-extrabold mb-8 leading-tight">
               <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600">
@@ -421,186 +277,188 @@ export default function SearchPage() {
           </motion.div>
         )}
 
-        {/* Search Bar */}
-        <div
-          className={`${
-            results.totalCount
-              ? "sticky top-0 bg-gray-50 py-4 z-50 shadow-sm"
-              : ""
-          }`}
-        >
-          <div className="max-w-2xl mx-auto relative">
-            <div className="relative flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  type="text"
-                  placeholder="What are you looking for?"
-                  value={query}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  className={`w-full pl-12 pr-12 py-3 text-lg transition-all duration-200 border rounded-full shadow-sm hover:shadow-md focus:shadow-lg ${
-                    results.totalCount ? "h-12" : "h-14"
-                  }`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (query.trim()) {
-                      setShowSuggestions(true);
-                    }
-                  }}
-                />
-                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
-                {query && (
-                  <button
-                    onClick={() => {
-                      setQuery("");
-                      setSuggestions([]);
-                    }}
-                    className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                )}
-              </div>
-              <button
-                onClick={handleSearch}
-                disabled={!query.trim() || isLoading}
-                className={`px-8 rounded-full text-white font-medium transition-all duration-200 ${
-                  results.totalCount ? "h-12" : "h-14"
-                } ${
-                  !query.trim() || isLoading
-                    ? "bg-gray-400 cursor-not-allowed"
-                    : "bg-blue-600 hover:bg-blue-700"
-                }`}
-              >
-                {isLoading ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Searching...</span>
-                  </div>
-                ) : (
-                  "Search"
-                )}
-              </button>
+        {/* Search Section */}
+        <div className="relative z-10 flex flex-col gap-4 w-full max-w-4xl mx-auto">
+          {/* Search Input */}
+          <div className="relative w-full">
+            <div className="relative">
+              <Input
+                type="text"
+                value={query}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onKeyPress={handleKeyPress}
+                placeholder="Search emails, documents, and more..."
+                className="w-full pl-12 pr-12 py-3 text-lg rounded-xl border-gray-200 focus:border-blue-500 focus:ring-blue-500"
+              />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+              {query && (
+                <button
+                  onClick={handleClearInput}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              )}
             </div>
 
-            {/* Search Suggestions */}
+            {/* Suggestions Dropdown */}
             <AnimatePresence>
               {showSuggestions && suggestions.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute z-10 w-full bg-white mt-2 rounded-2xl shadow-lg border border-gray-200 overflow-hidden"
+                  className="absolute left-0 right-0 mt-2 py-2 bg-white rounded-lg shadow-lg border border-gray-200 max-h-60 overflow-auto z-50"
                 >
                   {suggestions.map((suggestion, index) => (
-                    <motion.div
-                      key={index}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.15, delay: index * 0.05 }}
-                      className={`px-6 py-3 cursor-pointer hover:bg-gray-50 flex items-center gap-3 ${
-                        index === selectedSuggestionIndex ? "bg-gray-50" : ""
-                      }`}
+                    <button
+                      key={suggestion}
                       onClick={() => handleSuggestionClick(suggestion)}
+                      className={`w-full px-4 py-2 text-left hover:bg-gray-50 ${
+                        index === selectedSuggestionIndex
+                          ? "bg-gray-50"
+                          : "bg-white"
+                      }`}
                     >
-                      <Search className="h-4 w-4 text-gray-400" />
                       {highlightMatch(suggestion, query)}
-                    </motion.div>
+                    </button>
                   ))}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
+
+          {/* Filters */}
+          <div className="flex gap-4 w-full">
+            <Select value={source} onValueChange={setSource}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="All Sources" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sources</SelectItem>
+                <SelectItem value="microsoft">Microsoft</SelectItem>
+                <SelectItem value="google">Google</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={dateRange} onValueChange={setDateRange}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="All Time" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="recent">Last 7 Days</SelectItem>
+                <SelectItem value="last-week">Last 14 Days</SelectItem>
+                <SelectItem value="last-month">Last 30 Days</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
-        {/* Filters - Only show when there are results */}
+        {/* Results Section */}
         {results.totalCount > 0 && (
-          <div className="bg-white border-y">
-            <div className="max-w-3xl mx-auto py-3 flex items-center gap-4 text-sm">
-              <Select value={source} onValueChange={setSource}>
-                <SelectTrigger className="w-[180px] h-9">
-                  <SelectValue placeholder="Alle kilder" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Alle kilder</SelectItem>
-                  <SelectItem value="microsoft">SharePoint</SelectItem>
-                  <SelectItem value="google">Google Drive</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Select value={dateRange} onValueChange={setDateRange}>
-                <SelectTrigger className="w-[180px] h-9">
-                  <SelectValue placeholder="Når som helst" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Når som helst</SelectItem>
-                  <SelectItem value="recent">Siste 7 dager</SelectItem>
-                  <SelectItem value="last-week">Siste 14 dager</SelectItem>
-                  <SelectItem value="last-month">Siste måned</SelectItem>
-                </SelectContent>
-              </Select>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="mt-8 w-full"
+          >
+            <div className="text-sm text-gray-500 mb-4">
+              Found {results.totalCount} results
             </div>
-          </div>
-        )}
 
-        {/* Search Results */}
-        {results.totalCount > 0 && (
-          <div className="max-w-3xl mx-auto py-6">
-            <div className="text-sm text-gray-600 mb-6">
-              Fant {results.totalCount} resultater
-            </div>
-            <div className="space-y-6">
-              {results.categories.flatMap((category) =>
-                category.items.map((item, itemIndex) => (
-                  <div
-                    key={`${category.category}-${itemIndex}`}
-                    className="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200"
-                  >
-                    <a
-                      href={item.url || "#"}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block p-6"
+            <div className="space-y-8 w-full">
+              {results.categories.map((category) => (
+                <div
+                  key={`${category.source}-${category.type}`}
+                  className="w-full"
+                >
+                  <div className="flex items-center gap-2 mb-4">
+                    <div
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                        sourceColors[
+                          category.source as keyof typeof sourceColors
+                        ].icon
+                      }`}
                     >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          {renderSourceBadge(item.source, item.type)}
-                          {item.lastModified && (
-                            <span className="flex items-center text-sm text-gray-500 gap-1.5">
-                              <Calendar className="h-3.5 w-3.5" />
-                              {formatDate(item.lastModified)}
-                            </span>
+                      {sourceIcons[
+                        category.type as keyof typeof sourceIcons
+                      ] && (
+                        <div className="h-4 w-4 text-white">
+                          {React.createElement(
+                            sourceIcons[
+                              category.type as keyof typeof sourceIcons
+                            ]
                           )}
                         </div>
-                        {item.similarity && (
-                          <div className="text-xs font-medium px-2 py-1 rounded-full bg-green-50 text-green-700">
-                            {Math.round(item.similarity * 100)}% relevant
-                          </div>
-                        )}
-                      </div>
-                      <h3 className="text-lg font-semibold text-gray-900 group-hover:text-blue-600 mb-3">
-                        {decodeContent(item.title)}
-                      </h3>
-                      {item.content && (
-                        <div className="mb-4">
-                          <div className="text-sm text-gray-600 leading-relaxed space-y-2">
-                            {getContentPreview(item.content, query, item.type)}
-                          </div>
-                        </div>
                       )}
-                      {item.url && (
-                        <div className="flex items-center gap-2 text-sm text-gray-500 mt-3 pt-3 border-t">
-                          <FileText className="h-4 w-4" />
-                          <span className="truncate">
-                            {getCleanFilename(item.url)}
-                          </span>
-                        </div>
-                      )}
-                    </a>
+                    </div>
+                    <h2 className="text-lg font-semibold">
+                      {category.category} ({category.count})
+                    </h2>
                   </div>
-                ))
-              )}
+
+                  <div className="grid gap-4 w-full">
+                    {category.items.map((item) => (
+                      <motion.div
+                        key={item.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 w-full"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-medium mb-1">
+                              {highlightMatch(item.title, query)}
+                            </h3>
+                            <p className="text-sm text-gray-600 mb-2">
+                              {highlightMatch(
+                                item.content.substring(0, 200) + "...",
+                                query
+                              )}
+                            </p>
+                            <div className="flex items-center gap-2 text-sm text-gray-500">
+                              <span>
+                                {new Date(
+                                  item.lastModified
+                                ).toLocaleDateString()}
+                              </span>
+                              <span>•</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-xs ${
+                                  sourceColors[item.source].badge
+                                }`}
+                              >
+                                {item.source}
+                              </span>
+                            </div>
+                          </div>
+                          {item.url && (
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            >
+                              Open
+                            </a>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="mt-8 flex justify-center w-full">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              <span className="text-gray-600">Searching...</span>
             </div>
           </div>
         )}

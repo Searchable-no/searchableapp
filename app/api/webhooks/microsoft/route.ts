@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { supabase } from '@/lib/supabase'
 import { indexMicrosoftContent } from '@/lib/microsoft'
 
 // Handle subscription validation
@@ -27,16 +27,13 @@ export async function POST(request: NextRequest) {
       const { clientState, resource, changeType } = notification
       
       // Find the user based on clientState (which we'll set to userId when creating subscription)
-      const user = await prisma.user.findUnique({
-        where: { id: clientState },
-        include: {
-          connections: {
-            where: { provider: 'microsoft' }
-          }
-        }
-      })
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('*, connections(*)')
+        .eq('id', clientState)
+        .single()
 
-      if (!user || !user.connections.length) {
+      if (userError || !user || !user.connections?.length) {
         console.error(`No user or Microsoft connection found for clientState: ${clientState}`)
         continue
       }

@@ -1,19 +1,19 @@
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { supabase } from '@/lib/supabase'
 import { renewSubscriptions } from '@/lib/microsoft'
 
 // This endpoint should be called by a cron job every 24 hours
 export async function POST() {
   try {
     // Get all Microsoft connections
-    const connections = await prisma.connection.findMany({
-      where: {
-        provider: 'microsoft'
-      },
-      include: {
-        user: true
-      }
-    })
+    const { data: connections, error: connectionsError } = await supabase
+      .from('connections')
+      .select('*, user:users(*)')
+      .eq('provider', 'microsoft')
+
+    if (connectionsError) {
+      throw connectionsError
+    }
 
     console.log(`Found ${connections.length} Microsoft connections to process`)
 
@@ -21,16 +21,16 @@ export async function POST() {
     const results = await Promise.all(
       connections.map(async (connection) => {
         try {
-          await renewSubscriptions(connection.userId, connection.accessToken)
+          await renewSubscriptions(connection.user_id, connection.access_token)
           return {
-            userId: connection.userId,
+            userId: connection.user_id,
             email: connection.user.email,
             status: 'success'
           }
         } catch (error) {
-          console.error(`Error renewing subscriptions for user ${connection.userId}:`, error)
+          console.error(`Error renewing subscriptions for user ${connection.user_id}:`, error)
           return {
-            userId: connection.userId,
+            userId: connection.user_id,
             email: connection.user.email,
             status: 'error',
             error: error instanceof Error ? error.message : String(error)

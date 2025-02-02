@@ -1,29 +1,24 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { indexContent } from '@/lib/embeddings'
-import { prisma } from '@/lib/prisma'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Create or get test user
-    const testUser = await prisma.user.upsert({
-      where: {
-        email: 'test@example.com'
-      },
-      create: {
-        email: 'test@example.com',
-        name: 'Test User'
-      },
-      update: {}
-    })
+    const searchParams = request.nextUrl.searchParams
+    const userId = searchParams.get('userId')
 
-    console.log('Test user:', testUser)
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Missing userId parameter' },
+        { status: 400 }
+      )
+    }
 
     // Test indexing a piece of content
     const testContent = await indexContent(
-      testUser.id, // Use the actual user ID
+      userId,
       'test-doc-1',
-      'Test Document',
-      'This is a test document to verify Pinecone indexing is working correctly.',
+      'Test Document about Lovdata',
+      'This is a test document about Lovdata to verify Pinecone indexing and search is working correctly.',
       null,
       'document',
       'microsoft',
@@ -32,7 +27,6 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      user: testUser,
       indexed: testContent
     })
   } catch (error) {

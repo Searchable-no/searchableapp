@@ -1,134 +1,155 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
 import { getEmbedding, normalizeNorwegianText } from '@/lib/embeddings'
 import { search } from '@/lib/pinecone'
 
-interface SearchResult {
-  id: string
-  title: string
-  content?: string
-  url?: string | null
-  lastModified: Date
-  type: 'email' | 'document'
-  source: 'google' | 'microsoft'
-  similarity?: number
+interface PineconeMetadata {
+  title: string;
+  content: string;
+  url: string | null;
+  lastModified: string;
+  type: "email" | "document";
+  source: "microsoft" | "google";
+  userId: string;
+  sourceId: string;
 }
 
-interface GroupedResults {
-  [key: string]: SearchResult[]
+interface SearchResult {
+  id: string;
+  title: string;
+  content: string;
+  url: string | null;
+  lastModified: string;
+  type: "email" | "document";
+  source: "microsoft" | "google";
+  score: number;
+}
+
+interface SearchCategory {
+  category: string;
+  source: string;
+  type: string;
+  count: number;
+  items: SearchResult[];
 }
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const query = searchParams.get('q')
+  const userId = searchParams.get('userId')
   const source = searchParams.get('source') || 'all'
   const dateRange = searchParams.get('date') || 'all'
 
-  if (!query) {
+  if (!query || !userId) {
     return NextResponse.json(
-      { error: 'Search query is required' },
+      { error: 'Missing required parameters' },
       { status: 400 }
     )
   }
 
   try {
-    const userEmail = 'Arne@searchable.no' // This should be replaced with actual auth later
+    console.log('Search request:', { query, userId, source, dateRange })
 
-    const user = await prisma.user.findFirst({
-      where: {
-        email: {
-          mode: 'insensitive',
-          equals: userEmail
-        }
-      }
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // Normalize the query for better Norwegian language support
+    // Get embedding for search query
     const normalizedQuery = normalizeNorwegianText(query)
-    
-    // Get embedding for the normalized query
-    const queryEmbedding = await getEmbedding(normalizedQuery)
+    console.log('Normalized query:', normalizedQuery)
+    const embedding = await getEmbedding(normalizedQuery)
+    console.log('Generated embedding of length:', embedding.length)
 
-    // Perform semantic search
+    // Search Pinecone for similar vectors
+    console.log('Searching Pinecone with filter:', { userId: { $eq: userId } })
     const searchResults = await search({
-      vector: queryEmbedding,
-      query: normalizedQuery,
-      topK: 20,
-      filter: {
-        userId: user.id,
-        ...(source !== 'all' ? { source } : {})
-      }
+      vector: embedding,
+      filter: { userId: { $eq: userId } }
     })
+    console.log('Raw Pinecone results:', searchResults)
 
-    // Transform Pinecone results to our format
-    let results = searchResults.map(result => ({
-      id: result.id,
-      ...result.metadata,
-      similarity: result.score
-    })) as SearchResult[]
-
-    // Filter by date if specified
-    if (dateRange !== 'all') {
-      const now = new Date()
-      const cutoffDate = new Date()
-      
-      switch (dateRange) {
-        case 'recent':
-          cutoffDate.setDate(now.getDate() - 7)
-          break
-        case 'last-week':
-          cutoffDate.setDate(now.getDate() - 14)
-          break
-        case 'last-month':
-          cutoffDate.setMonth(now.getMonth() - 1)
-          break
+    // Convert Pinecone results to SearchResult format
+    const results = searchResults.map(result => {
+      if (!result.metadata) return null
+      const metadata = result.metadata as unknown as PineconeMetadata
+      return {
+        id: result.id,
+        title: metadata.title,
+        content: metadata.content,
+        url: metadata.url,
+        lastModified: metadata.lastModified,
+        type: metadata.type,
+        source: metadata.source,
+        score: result.score || 0
       }
+    }).filter(Boolean) as SearchResult[]
 
-      results = results.filter(
-        result => new Date(result.lastModified) >= cutoffDate
-      )
-    }
+    // Filter by source if specified
+    const filteredResults = source === 'all' 
+      ? results 
+      : results.filter(result => result.source === source)
+
+    // Filter by date range if specified
+    const dateFilteredResults = filterByDateRange(filteredResults, dateRange)
 
     // Group results by source and type
-    const groupedResults = results.reduce((acc: GroupedResults, result) => {
-      const category = `${result.source}-${result.type}`
-      if (!acc[category]) {
-        acc[category] = []
-      }
-      acc[category].push(result)
-      return acc
-    }, {})
+    const categories = groupResultsByCategory(dateFilteredResults)
 
-    // Format the response with categories
-    const formattedResults = {
-      totalCount: results.length,
-      categories: Object.entries(groupedResults).map(([category, items]) => ({
-        category,
-        source: category.split('-')[0],
-        type: category.split('-')[1],
-        count: items.length,
-        items: items.map(item => ({
-          ...item,
-          similarity: item.similarity ? Math.round(item.similarity * 100) / 100 : undefined
-        }))
-      })),
+    return NextResponse.json({
+      totalCount: dateFilteredResults.length,
+      categories,
       query,
       dateRange
-    }
-
-    return NextResponse.json(formattedResults)
+    })
   } catch (error) {
-    console.error('Search error:', error)
+    console.error('Error in search:', error)
     return NextResponse.json(
       { error: 'Failed to perform search' },
       { status: 500 }
     )
   }
+}
+
+function filterByDateRange(results: SearchResult[], dateRange: string): SearchResult[] {
+  if (dateRange === 'all') return results
+
+  const now = new Date()
+  const cutoffDate = new Date()
+
+  switch (dateRange) {
+    case 'recent':
+      cutoffDate.setDate(now.getDate() - 7)
+      break
+    case 'last-week':
+      cutoffDate.setDate(now.getDate() - 14)
+      break
+    case 'last-month':
+      cutoffDate.setMonth(now.getMonth() - 1)
+      break
+    default:
+      return results
+  }
+
+  return results.filter(result => {
+    const lastModified = new Date(result.lastModified)
+    return lastModified >= cutoffDate
+  })
+}
+
+function groupResultsByCategory(results: SearchResult[]): SearchCategory[] {
+  const categories: { [key: string]: SearchResult[] } = {}
+
+  results.forEach(result => {
+    const key = `${result.source}-${result.type}`
+    if (!categories[key]) {
+      categories[key] = []
+    }
+    categories[key].push(result)
+  })
+
+  return Object.entries(categories).map(([key, items]) => {
+    const [source, type] = key.split('-')
+    return {
+      category: key,
+      source,
+      type,
+      count: items.length,
+      items
+    }
+  })
 } 

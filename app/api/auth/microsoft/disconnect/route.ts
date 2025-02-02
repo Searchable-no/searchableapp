@@ -1,53 +1,72 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    const userEmail = 'Arne@searchable.no' // This should be replaced with actual auth later
+    console.log('Received disconnect request');
+    const body = await request.json();
+    console.log('Request body:', body);
+    
+    const { email } = body;
+    
+    if (!email) {
+      console.log('No email provided in request');
+      return NextResponse.json(
+        { error: 'Email is required' },
+        { status: 400 }
+      )
+    }
 
-    console.log('Disconnecting Microsoft for user:', userEmail)
+    console.log('Disconnecting Microsoft for user:', email)
 
-    // Find the user
-    const user = await prisma.user.findFirst({
-      where: {
-        email: {
-          mode: 'insensitive',
-          equals: userEmail
-        }
-      }
-    })
+    // Find the user - get the most recently created one if multiple exist
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .ilike('email', email)
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (!user) {
-      console.log('User not found:', userEmail)
+    if (userError) {
+      console.log('Error finding user:', userError);
+      return NextResponse.json(
+        { error: 'Failed to find user' },
+        { status: 500 }
+      )
+    }
+
+    if (!users || users.length === 0) {
+      console.log('No user found for email:', email);
       return NextResponse.json(
         { error: 'User not found' },
         { status: 404 }
       )
     }
 
+    const user = users[0];
     console.log('Found user:', user.id)
 
     // Delete the connection
-    const deletedConnection = await prisma.connection.deleteMany({
-      where: {
-        userId: user.id,
-        provider: 'microsoft'
-      }
-    })
+    const { error: deleteError } = await supabase
+      .from('connections')
+      .delete()
+      .match({ user_id: user.id, provider: 'microsoft' })
 
-    console.log('Deleted connection:', deletedConnection)
+    if (deleteError) {
+      console.error('Error deleting connection:', deleteError)
+      return NextResponse.json(
+        { error: 'Failed to delete connection' },
+        { status: 500 }
+      )
+    }
 
     return NextResponse.json({ 
-      success: true,
-      deletedConnection: deletedConnection.count
+      success: true
     })
   } catch (error) {
     console.error('Error disconnecting Microsoft:', error)
     return NextResponse.json(
-      { 
-        error: 'Failed to disconnect from Microsoft',
-        details: error instanceof Error ? error.message : String(error)
-      },
+      { error: 'Failed to disconnect Microsoft' },
       { status: 500 }
     )
   }

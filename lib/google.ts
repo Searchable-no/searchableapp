@@ -1,4 +1,4 @@
-import { prisma } from './prisma'
+import { supabase } from './supabase'
 
 interface GoogleSearchResult {
   id: string
@@ -11,18 +11,26 @@ interface GoogleSearchResult {
   lastModifiedTime?: string
 }
 
+interface Connection {
+  userId: string
+  provider: string
+  accessToken: string
+}
+
 export async function searchGoogle(userId: string, query: string) {
   try {
-    const connection = await prisma.connection.findFirst({
-      where: {
-        userId,
-        provider: 'google',
-      },
-    })
+    const { data: connections, error } = await supabase
+      .from('connections')
+      .select('*')
+      .eq('userId', userId)
+      .eq('provider', 'google')
 
-    if (!connection) {
+    if (error) throw error
+    if (!connections || connections.length === 0) {
       throw new Error('Google connection not found')
     }
+
+    const connection = connections[0] as Connection
 
     // TODO: Check token expiration and refresh if needed
 

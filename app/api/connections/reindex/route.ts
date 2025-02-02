@@ -1,25 +1,20 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
 import { indexMicrosoftContent } from '@/lib/microsoft'
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   console.log('Reindex endpoint hit')
   try {
     const userEmail = 'Arne@searchable.no' // This should be replaced with actual auth later
     console.log('Looking for user with email:', userEmail)
 
-    const user = await prisma.user.findFirst({
-      where: {
-        email: {
-          mode: 'insensitive',
-          equals: userEmail
-        }
-      }
-    })
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .ilike('email', userEmail)
+      .single()
 
-    console.log('User lookup result:', user)
-
-    if (!user) {
+    if (userError || !user) {
       console.log('User not found')
       return NextResponse.json(
         { error: 'User not found' },
@@ -30,13 +25,12 @@ export async function POST(request: NextRequest) {
     // Start content indexing
     console.log('Starting content indexing for user:', user.id)
     try {
-      const indexingResult = await indexMicrosoftContent(user.id)
-      console.log('Indexing completed successfully:', indexingResult)
+      await indexMicrosoftContent(user.id)
+      console.log('Indexing completed successfully')
 
       return NextResponse.json({
         success: true,
-        indexed: true,
-        ...indexingResult
+        indexed: true
       })
     } catch (indexError) {
       console.error('Error during indexing:', indexError)

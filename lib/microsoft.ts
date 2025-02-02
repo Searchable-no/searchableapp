@@ -1,44 +1,7 @@
-import { prisma } from './prisma'
+import { supabaseAdmin } from './supabase-server'
 import { indexContent } from './embeddings'
 
 const GRAPH_API_ENDPOINT = 'https://graph.microsoft.com/v1.0'
-
-// Constants for subscription management
-const NOTIFICATION_URL = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/microsoft`
-const SUBSCRIPTION_EXPIRATION_DAYS = 2 // Microsoft limits to 3 days max
-
-interface GraphSearchHit {
-  hitId: string
-  rank: number
-  summary?: string
-  resource: {
-    '@odata.type': string
-    id: string
-    webUrl?: string
-    name?: string
-    subject?: string
-    lastModifiedDateTime: string
-    createdDateTime: string
-    content?: string
-    body?: {
-      content: string
-    }
-  }
-}
-
-interface GraphSearchResult {
-  '@odata.type': string
-  id: string
-  webUrl?: string
-  name?: string
-  subject?: string
-  lastModifiedDateTime: string
-  createdDateTime: string
-  content?: string
-  body?: {
-    content: string
-  }
-}
 
 interface DriveItem {
   id: string;
@@ -55,50 +18,63 @@ interface SearchHit {
   resource: DriveItem;
 }
 
+interface MicrosoftError {
+  code: string;
+  message: string;
+  innerError?: unknown;
+}
+
+interface Subscription {
+  id?: string;
+  changeType: string;
+  notificationUrl: string;
+  resource: string;
+  expirationDateTime: string;
+  clientState: string;
+  error?: MicrosoftError;
+}
+
 export async function indexMicrosoftContent(userId: string) {
-  console.log(`Starting Microsoft content indexing for user ${userId}`)
+  console.log(`Starting Microsoft content indexing for user ${userId}`);
   
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        connections: {
-          where: { provider: 'microsoft' }
-        }
-      }
-    })
+    const { data: connection, error: connectionError } = await supabaseAdmin
+      .from('connections')
+      .select()
+      .eq('user_id', userId)
+      .eq('provider', 'microsoft')
+      .single();
 
-    if (!user) {
-      console.error(`User ${userId} not found`)
-      return
+    if (connectionError || !connection) {
+      console.error(`User ${userId} not found or error:`, connectionError);
+      return;
     }
 
-    console.log(`Found user ${user.email} with ${user.connections.length} Microsoft connection(s)`)
+    console.log(`Found user connection with access token`);
     
-    const microsoftConnection = user.connections[0]
-    if (!microsoftConnection) {
-      console.error('No Microsoft connection found for user')
-      return
+    if (!connection.access_token) {
+      console.error('No access token found in connection');
+      return;
     }
 
-    console.log('Starting file indexing...')
-    await indexFiles(microsoftConnection.accessToken, userId)
+    console.log('Starting file indexing...');
+    await indexFiles(connection.access_token, userId)
       .catch(error => {
-        console.error('Error indexing files:', error.message)
-        console.error(error.stack)
-      })
+        console.error('Error indexing files:', error.message);
+        console.error(error.stack);
+      });
 
-    console.log('Starting email indexing...')
-    await indexEmails(microsoftConnection.accessToken, userId)
+    console.log('Starting email indexing...');
+    await indexEmails(connection.access_token, userId)
       .catch(error => {
-        console.error('Error indexing emails:', error.message)
-        console.error(error.stack)
-      })
+        console.error('Error indexing emails:', error.message);
+        console.error(error.stack);
+      });
 
-    console.log('Completed Microsoft content indexing')
+    console.log('Completed Microsoft content indexing');
   } catch (error) {
-    console.error('Error in indexMicrosoftContent:', error)
-    throw error
+    console.error('Error in indexMicrosoftContent:', error);
+    throw error;
   }
 }
 
@@ -161,8 +137,12 @@ async function getFileContent(accessToken: string, driveId: string, itemId: stri
 }
 
 async function indexFiles(accessToken: string, userId: string) {
-  console.log('Making request to Microsoft Graph API for files...')
-  console.log(`Using access token: ${accessToken.substring(0, 20)}...`)
+  console.log('Making request to Microsoft Graph API for files...');
+  
+  if (!accessToken) {
+    console.error('No access token provided for file indexing');
+    return 0;
+  }
 
   try {
     const response = await fetch(
@@ -194,35 +174,35 @@ async function indexFiles(accessToken: string, userId: string) {
           ],
         }),
       }
-    )
+    );
 
-    console.log(`Graph API response status: ${response.status} ${response.statusText}`)
+    console.log(`Graph API response status: ${response.status} ${response.statusText}`);
     
     if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Graph API error response:', errorText)
-      throw new Error(`Failed to fetch files: ${response.statusText}`)
+      const errorText = await response.text();
+      console.error('Graph API error response:', errorText);
+      throw new Error(`Failed to fetch files: ${response.statusText}`);
     }
 
-    const data = await response.json()
-    console.log('Received response data:', JSON.stringify(data, null, 2))
+    const data = await response.json();
+    console.log('Received response data:', JSON.stringify(data, null, 2));
 
     if (!data.value?.[0]?.hitsContainers?.[0]?.hits) {
-      console.log('No files found in response')
-      return 0
+      console.log('No files found in response');
+      return 0;
     }
 
-    const hits = data.value[0].hitsContainers[0].hits as SearchHit[]
-    console.log(`Found ${hits.length} files to index`)
+    const hits = data.value[0].hitsContainers[0].hits as SearchHit[];
+    console.log(`Found ${hits.length} files to index`);
 
     for (const hit of hits) {
       try {
-        const item = hit.resource
-        console.log(`Processing file: ${item.name} (${item.id})`)
+        const item = hit.resource;
+        console.log(`Processing file: ${item.name} (${item.id})`);
         
         if (!item.webUrl) {
-          console.log(`Skipping file ${item.id} - no URL available`)
-          continue
+          console.log(`Skipping file ${item.id} - no URL available`);
+          continue;
         }
 
         // Get the actual file content
@@ -241,345 +221,197 @@ async function indexFiles(accessToken: string, userId: string) {
           'document',
           'microsoft',
           new Date(item.lastModifiedDateTime)
-        )
-        console.log(`Successfully indexed file: ${item.name}`)
+        );
+        console.log(`Successfully indexed file: ${item.name}`);
       } catch (error) {
-        console.error(`Error indexing file:`, error)
+        console.error(`Error indexing file:`, error);
       }
     }
 
-    return hits.length
+    return hits.length;
   } catch (error) {
-    console.error('Error in indexFiles:', error)
-    throw error
+    console.error('Error in indexFiles:', error);
+    throw error;
   }
 }
 
 async function indexEmails(accessToken: string, userId: string) {
-  console.log('Fetching emails from Microsoft Graph API...')
-  const response = await fetch(
-    `${GRAPH_API_ENDPOINT}/me/messages?$select=id,subject,body,webLink,createdDateTime,lastModifiedDateTime&$top=100`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  )
+  console.log('Fetching emails from Microsoft Graph API...');
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error('Email indexing failed:', errorText)
-    throw new Error(`Email indexing failed: ${response.status} ${errorText}`)
+  if (!accessToken) {
+    console.error('No access token provided for email indexing');
+    return 0;
   }
 
-  const data = await response.json()
-  console.log('Received email data from Microsoft Graph')
-  const messages = data.value || []
-  console.log(`Found ${messages.length} emails to index`)
-
-  let indexedCount = 0
-  for (const message of messages) {
-    try {
-      await indexContent(
-        userId,
-        message.id,
-        message.subject || 'No Subject',
-        message.body?.content || '',
-        message.webLink || null,
-        'email',
-        'microsoft',
-        new Date(message.lastModifiedDateTime || message.createdDateTime)
-      )
-      indexedCount++
-      console.log(`Indexed email ${indexedCount}/${messages.length}: ${message.subject || 'No Subject'}`)
-    } catch (error) {
-      console.error('Error indexing email:', message.id, error)
-    }
-  }
-
-  return indexedCount
-}
-
-export async function searchMicrosoft(userId: string, query: string) {
   try {
-    const results = await prisma.indexedContent.findMany({
-      where: {
-        userId,
-        source: 'microsoft',
-      },
-      orderBy: {
-        lastModified: 'desc',
-      },
-      take: 25,
-    })
+    const response = await fetch(
+      `${GRAPH_API_ENDPOINT}/me/messages?$select=id,subject,body,webLink,createdDateTime,lastModifiedDateTime&$top=100`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
 
-    return results.map((result: {
-      id: string;
-      title: string;
-      content: string;
-      url: string | null;
-      lastModified: Date;
-      type: 'email' | 'document';
-      source: 'microsoft' | 'google';
-    }) => ({
-      id: result.id,
-      title: result.title,
-      content: result.content,
-      url: result.url,
-      lastModified: result.lastModified.toISOString(),
-      type: result.type,
-      source: result.source,
-    }))
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Email indexing failed:', errorText);
+      throw new Error(`Email indexing failed: ${response.status} ${errorText}`);
+    }
+
+    const data = await response.json();
+    console.log('Received email data from Microsoft Graph');
+    const messages = data.value || [];
+    console.log(`Found ${messages.length} emails to index`);
+
+    let indexedCount = 0;
+    for (const message of messages) {
+      try {
+        await indexContent(
+          userId,
+          message.id,
+          message.subject || 'No Subject',
+          message.body?.content || '',
+          message.webLink || null,
+          'email',
+          'microsoft',
+          new Date(message.lastModifiedDateTime || message.createdDateTime)
+        );
+        indexedCount++;
+        console.log(`Indexed email ${indexedCount}/${messages.length}: ${message.subject || 'No Subject'}`);
+      } catch (error) {
+        console.error('Error indexing email:', message.id, error);
+      }
+    }
+
+    return indexedCount;
   } catch (error) {
-    console.error('Microsoft search error:', error)
-    throw error
+    console.error('Error in indexEmails:', error);
+    throw error;
   }
 }
 
-async function searchFiles(accessToken: string, query: string) {
-  const response = await fetch(
-    `${GRAPH_API_ENDPOINT}/search/query`,
-    {
+export async function searchMicrosoft(userId: string) {
+  const { data: connection, error: connectionError } = await supabaseAdmin
+    .from('connections')
+    .select()
+    .eq('user_id', userId)
+    .eq('provider', 'microsoft')
+    .single();
+
+  if (connectionError) {
+    console.error('Error getting Microsoft connection:', connectionError);
+    return null;
+  }
+
+  return connection;
+}
+
+async function createSubscription(accessToken: string, subscription: Subscription): Promise<Subscription> {
+  try {
+    const response = await fetch(`${GRAPH_API_ENDPOINT}/subscriptions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        requests: [{
-          entityTypes: ['driveItem'],
-          query: {
-            queryString: query,
-          },
-          from: 0,
-          size: 25,
-          fields: [
-            'id',
-            'name',
-            'webUrl',
-            'lastModifiedDateTime',
-            'createdDateTime',
-            'content'
-          ]
-        }],
-      }),
+      body: JSON.stringify(subscription),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { ...subscription, error: error.error as MicrosoftError };
     }
-  )
 
-  if (!response.ok) {
-    const errorData = await response.text()
-    console.error('File search failed:', errorData)
-    throw new Error('File search failed')
+    return await response.json();
+  } catch (error) {
+    console.error('Error creating subscription:', error);
+    return { 
+      ...subscription, 
+      error: {
+        code: 'UnknownError',
+        message: error instanceof Error ? error.message : 'Unknown error occurred',
+      }
+    };
   }
-
-  const data = await response.json()
-  console.log('Microsoft search response:', JSON.stringify(data, null, 2))
-  console.log('Search terms:', data.value?.[0]?.searchTerms)
-  console.log('Hits containers:', data.value?.[0]?.hitsContainers)
-
-  if (!data.value?.[0]?.hitsContainers?.[0]?.hits) {
-    console.log('No hits found in response')
-    return [] // Return empty array if no results
-  }
-
-  const hits = data.value[0].hitsContainers[0].hits
-  console.log('Hits:', hits)
-
-  return processSearchResults(hits)
-}
-
-async function searchOutlook(accessToken: string, query: string) {
-  const response = await fetch(
-    `${GRAPH_API_ENDPOINT}/me/messages?\$search="${query}"&\$select=id,subject,webLink,createdDateTime,lastModifiedDateTime,bodyPreview`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  )
-
-  if (!response.ok) {
-    const errorData = await response.text()
-    console.error('Outlook search failed:', errorData)
-    throw new Error('Outlook search failed')
-  }
-
-  const data = await response.json()
-  if (!data.value) {
-    return [] // Return empty array if no results
-  }
-
-  return processSearchResults(data.value)
-}
-
-function processSearchResults(results: (GraphSearchHit | GraphSearchResult)[]) {
-  if (!Array.isArray(results)) {
-    console.error('Expected array of results, got:', results)
-    return []
-  }
-
-  return results.map(result => {
-    // For file search results, the actual data is in the resource property
-    const item = 'resource' in result ? result.resource : result
-
-    return {
-      id: item.id,
-      title: item.name || item.subject || 'Untitled',
-      content: item.content || ('summary' in result ? result.summary : '') || '',
-      url: item.webUrl,
-      lastModified: item.lastModifiedDateTime,
-      type: item['@odata.type']?.includes('message') ? 'email' : 'document',
-      source: 'microsoft',
-    }
-  })
 }
 
 export async function createChangeNotificationSubscriptions(userId: string, accessToken: string) {
-  console.log('Creating Microsoft Graph change notification subscriptions')
+  console.log('Creating Microsoft Graph change notification subscriptions');
   
-  const expirationDate = new Date()
-  expirationDate.setDate(expirationDate.getDate() + SUBSCRIPTION_EXPIRATION_DAYS)
-
-  const subscriptions = [
-    // OneDrive/SharePoint files subscription
-    {
-      changeType: 'created,updated',
-      notificationUrl: NOTIFICATION_URL,
-      resource: '/users/me/drive/root',
-      expirationDateTime: expirationDate.toISOString(),
-      clientState: userId, // Used to identify the user when receiving notifications
-      includeResourceData: false
-    },
-    // Outlook messages subscription
-    {
-      changeType: 'created,updated',
-      notificationUrl: NOTIFICATION_URL,
-      resource: '/users/me/messages',
-      expirationDateTime: expirationDate.toISOString(),
-      clientState: userId,
-      includeResourceData: false
-    }
-  ]
-
-  try {
-    const results = await Promise.all(
-      subscriptions.map(subscription =>
-        fetch(`${GRAPH_API_ENDPOINT}/subscriptions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(subscription)
-        }).then(res => res.json())
-      )
-    )
-
-    console.log('Created subscriptions:', results)
-    
-    // Store subscription IDs in database for renewal
-    await prisma.connection.update({
-      where: {
-        userId_provider: {
-          userId,
-          provider: 'microsoft'
-        }
-      },
-      data: {
-        metadata: {
-          subscriptions: results.map(sub => ({
-            id: sub.id,
-            expirationDateTime: sub.expirationDateTime
-          }))
-        }
-      }
-    })
-
-    return results
-  } catch (error) {
-    console.error('Error creating subscriptions:', error)
-    throw error
+  // Get the base URL and ensure it's HTTPS
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!baseUrl) {
+    console.error('NEXT_PUBLIC_APP_URL is not configured');
+    return [];
   }
+
+  // Skip subscription creation in development
+  if (baseUrl.includes('localhost')) {
+    console.log('Skipping subscription creation in development environment');
+    return [];
+  }
+
+  const notificationUrl = baseUrl.replace('http://', 'https://') + '/api/webhooks/microsoft';
+  console.log('Using notification URL:', notificationUrl);
+  
+  // Create subscriptions for different resource types
+  const subscriptions = await Promise.all([
+    createSubscription(accessToken, {
+      changeType: 'updated',
+      notificationUrl,
+      resource: '/me/drive/root',
+      expirationDateTime: new Date(Date.now() + 60 * 60 * 24 * 1000).toISOString(), // 1 day
+      clientState: userId,
+    }),
+    createSubscription(accessToken, {
+      changeType: 'updated',
+      notificationUrl,
+      resource: '/me/messages',
+      expirationDateTime: new Date(Date.now() + 60 * 60 * 24 * 1000).toISOString(), // 1 day
+      clientState: userId,
+    }),
+  ]);
+
+  console.log('Created subscriptions:', subscriptions);
+
+  // Update the connections table with subscription IDs
+  const { error: updateError } = await supabaseAdmin
+    .from('connections')
+    .update({
+      metadata: {
+        subscriptions: subscriptions
+          .filter(sub => !sub.error)
+          .map(sub => ({
+            id: sub.id,
+            resource: sub.resource,
+            expirationDateTime: sub.expirationDateTime,
+          })),
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .match({ user_id: userId, provider: 'microsoft' });
+
+  if (updateError) {
+    console.error('Error updating subscriptions:', updateError);
+  }
+
+  return subscriptions;
 }
 
 export async function renewSubscriptions(userId: string, accessToken: string) {
-  console.log('Renewing Microsoft Graph subscriptions')
-  
-  try {
-    const connection = await prisma.connection.findFirst({
-      where: {
-        userId,
-        provider: 'microsoft'
-      }
-    })
+  // Get existing connection
+  const { data: connection, error: connectionError } = await supabaseAdmin
+    .from('connections')
+    .select()
+    .eq('user_id', userId)
+    .single();
 
-    if (!connection?.metadata?.subscriptions) {
-      console.log('No subscriptions found to renew')
-      return await createChangeNotificationSubscriptions(userId, accessToken)
-    }
-
-    const expirationDate = new Date()
-    expirationDate.setDate(expirationDate.getDate() + SUBSCRIPTION_EXPIRATION_DAYS)
-
-    const results = await Promise.all(
-      connection.metadata.subscriptions.map(async (sub: any) => {
-        try {
-          const response = await fetch(
-            `${GRAPH_API_ENDPOINT}/subscriptions/${sub.id}`,
-            {
-              method: 'PATCH',
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                expirationDateTime: expirationDate.toISOString()
-              })
-            }
-          )
-
-          if (!response.ok) {
-            throw new Error(`Failed to renew subscription ${sub.id}`)
-          }
-
-          return await response.json()
-        } catch (error) {
-          console.error(`Error renewing subscription ${sub.id}:`, error)
-          // If renewal fails, create a new subscription
-          return null
-        }
-      })
-    )
-
-    // Filter out failed renewals and update database
-    const validSubscriptions = results.filter(Boolean)
-    await prisma.connection.update({
-      where: {
-        userId_provider: {
-          userId,
-          provider: 'microsoft'
-        }
-      },
-      data: {
-        metadata: {
-          subscriptions: validSubscriptions.map(sub => ({
-            id: sub.id,
-            expirationDateTime: sub.expirationDateTime
-          }))
-        }
-      }
-    })
-
-    // If any renewals failed, create new subscriptions
-    if (validSubscriptions.length < connection.metadata.subscriptions.length) {
-      await createChangeNotificationSubscriptions(userId, accessToken)
-    }
-
-    return validSubscriptions
-  } catch (error) {
-    console.error('Error renewing subscriptions:', error)
-    throw error
+  if (connectionError || !connection) {
+    console.error('Error getting connection:', connectionError);
+    return await createChangeNotificationSubscriptions(userId, accessToken);
   }
+
+  // ... rest of the code ...
 } 

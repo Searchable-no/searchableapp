@@ -22,17 +22,21 @@ export { pc as pinecone, index }
 
 export interface SearchParams {
   vector: number[];
-  query: string;
   topK?: number;
   filter?: object;
 }
 
 export async function search({
   vector,
-  query,
   topK = 10,
   filter = {}
 }: SearchParams) {
+  console.log('Executing Pinecone search with params:', {
+    topK,
+    filter,
+    vectorLength: vector.length
+  })
+
   // Perform semantic search using dense vectors
   const results = await index.query({
     vector,
@@ -42,5 +46,16 @@ export async function search({
     includeValues: false
   });
 
+  console.log(`Found ${results.matches?.length || 0} matches`)
+  if (results.matches?.length) {
+    console.log('First match metadata:', results.matches[0].metadata)
+  }
+
   return results.matches || [];
+}
+
+export async function deleteAllVectors() {
+  console.log('Deleting all vectors from Pinecone...')
+  await index.deleteAll()
+  console.log('Successfully deleted all vectors')
 } 

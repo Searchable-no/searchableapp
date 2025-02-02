@@ -16,6 +16,7 @@ import {
   Sun,
   Users,
 } from "lucide-react";
+import { useSession } from "@/lib/session";
 
 const navigation = [
   { title: "Dashboard", href: "/", icon: BarChart3 },
@@ -31,11 +32,17 @@ export function AppSidebar() {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
+  const { session } = useSession();
 
   // Prevent hydration mismatch by only rendering theme switch after mount
   React.useEffect(() => {
     setMounted(true);
   }, []);
+
+  // If no session, don't render the sidebar
+  if (!session) {
+    return null;
+  }
 
   return (
     <div className="flex h-full w-[280px] flex-col bg-white border-r border-gray-100">
@@ -49,9 +56,9 @@ export function AppSidebar() {
         </div>
         <div className="flex flex-col">
           <span className="text-sm font-semibold text-gray-900">
-            Arne Lucasen
+            {session.user.email?.split("@")[0] || "User"}
           </span>
-          <span className="text-xs text-gray-500">ab@searchable.no</span>
+          <span className="text-xs text-gray-500">{session.user.email}</span>
         </div>
       </div>
 
