@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Search, X, Mail, FileText } from "lucide-react";
+import {
+  Search,
+  X,
+  Mail,
+  FileText,
+  Maximize2,
+  ExternalLink,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,6 +21,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import debounce from "lodash/debounce";
 import { useSession } from "@/lib/session";
 import React from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface AutocompleteResult {
   title: string;
@@ -66,6 +79,58 @@ const sourceColors = {
   },
 };
 
+// Add this utility function to clean HTML content
+const cleanHtmlContent = (content: string): string => {
+  // Skip cleaning if content is empty
+  if (!content) return "";
+
+  try {
+    // If the content contains SharePoint metadata, return empty string
+    if (
+      content.includes('"vanityUrls"') ||
+      content.includes('"multiGeoInfo"')
+    ) {
+      return "";
+    }
+
+    // Remove CSS and style blocks
+    const withoutCSS = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+
+    // Remove media queries and other CSS rules
+    const withoutMediaQueries = withoutCSS.replace(
+      /@media[^{]*{[\s\S]*?}/gi,
+      ""
+    );
+
+    // Remove JavaScript
+    const withoutJS = withoutMediaQueries
+      .replace(/var\s+[_$a-zA-Z][_$a-zA-Z0-9]*\s*=\s*\{[^}]*\};?/g, "")
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+
+    // Extract text from HTML while preserving some structure
+    const withoutTags = withoutJS
+      .replace(/<(br|p|div|h\d)[^>]*>/gi, "\n") // Replace block elements with newlines
+      .replace(/<li[^>]*>/gi, "\n• ") // Replace list items with bullets
+      .replace(/<[^>]*>/g, "") // Remove remaining HTML tags
+      .replace(/&nbsp;/g, " ") // Replace non-breaking spaces
+      .replace(/\n{3,}/g, "\n\n"); // Reduce multiple newlines
+
+    // Decode HTML entities
+    const decoded = withoutTags
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#039;/g, "'")
+      .trim();
+
+    return decoded;
+  } catch (error) {
+    console.error("Error cleaning content:", error);
+    return "";
+  }
+};
+
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("all");
@@ -85,6 +150,7 @@ export default function SearchPage() {
     loading: sessionLoading,
     error: sessionError,
   } = useSession();
+  const [selectedItem, setSelectedItem] = useState<SearchResult | null>(null);
 
   useEffect(() => {
     const handleResize = () => {
@@ -404,33 +470,96 @@ export default function SearchPage() {
                         key={item.id}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 w-full"
+                        className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 w-full hover:shadow-md transition-shadow cursor-pointer"
+                        onClick={() => setSelectedItem(item)}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-medium mb-1">
-                              {highlightMatch(item.title, query)}
-                            </h3>
-                            <p className="text-sm text-gray-600 mb-2">
-                              {highlightMatch(
-                                item.content.substring(0, 200) + "...",
-                                query
-                              )}
-                            </p>
-                            <div className="flex items-center gap-2 text-sm text-gray-500">
-                              <span>
-                                {new Date(
-                                  item.lastModified
-                                ).toLocaleDateString()}
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-lg font-medium mb-2 text-gray-900">
+                                {highlightMatch(item.title, query)}
+                              </h3>
+                              <button
+                                className="p-1 hover:bg-gray-100 rounded-full"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedItem(item);
+                                }}
+                              >
+                                <Maximize2 className="w-4 h-4 text-gray-500" />
+                              </button>
+                            </div>
+                            {item.title.endsWith(".pdf") && (
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-blue-50 text-blue-700 text-xs font-medium">
+                                  <svg
+                                    className="w-4 h-4"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path
+                                      fillRule="evenodd"
+                                      clipRule="evenodd"
+                                      d="M6 2C4.34315 2 3 3.34315 3 5V19C3 20.6569 4.34315 22 6 22H18C19.6569 22 21 20.6569 21 19V9C21 5.13401 17.866 2 14 2H6ZM6 4H13V9H19V19C19 19.5523 18.5523 20 18 20H6C5.44772 20 5 19.5523 5 19V5C5 4.44772 5.44772 4 6 4ZM15 4.10002C16.6113 4.4271 17.9413 5.52906 18.584 7H15V4.10002Z"
+                                      fill="currentColor"
+                                    />
+                                  </svg>
+                                  PDF Document
+                                </span>
+                              </div>
+                            )}
+                            {cleanHtmlContent(item.content) && (
+                              <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                                <p className="text-sm text-gray-700 leading-relaxed">
+                                  {highlightMatch(
+                                    cleanHtmlContent(item.content).substring(
+                                      0,
+                                      300
+                                    ) +
+                                      (item.content.length > 300 ? "..." : ""),
+                                    query
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-3 text-sm">
+                              <span className="text-gray-500">
+                                {new Date(item.lastModified).toLocaleDateString(
+                                  undefined,
+                                  {
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                  }
+                                )}
                               </span>
-                              <span>•</span>
+                              <span className="text-gray-300">•</span>
                               <span
-                                className={`px-2 py-0.5 rounded-full text-xs ${
+                                className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                                   sourceColors[item.source].badge
                                 }`}
                               >
-                                {item.source}
+                                {item.source.charAt(0).toUpperCase() +
+                                  item.source.slice(1)}
                               </span>
+                              {item.type && (
+                                <>
+                                  <span className="text-gray-300">•</span>
+                                  <span className="text-gray-600 flex items-center gap-1">
+                                    {React.createElement(
+                                      sourceIcons[
+                                        item.type as keyof typeof sourceIcons
+                                      ],
+                                      { className: "h-4 w-4" }
+                                    )}
+                                    <span className="text-xs">
+                                      {item.type.charAt(0).toUpperCase() +
+                                        item.type.slice(1)}
+                                    </span>
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                           {item.url && (
@@ -438,9 +567,11 @@ export default function SearchPage() {
                               href={item.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="shrink-0 px-3 py-1 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              className="shrink-0 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-2"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               Open
+                              <ExternalLink className="w-4 h-4" />
                             </a>
                           )}
                         </div>
@@ -462,6 +593,126 @@ export default function SearchPage() {
             </div>
           </div>
         )}
+
+        {/* Preview Modal */}
+        <Dialog
+          open={!!selectedItem}
+          onOpenChange={(open: boolean) => !open && setSelectedItem(null)}
+        >
+          <DialogContent className="max-w-4xl w-full h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    {selectedItem?.title}
+                  </h2>
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="text-sm text-gray-500">
+                      {selectedItem?.lastModified &&
+                        new Date(selectedItem.lastModified).toLocaleDateString(
+                          undefined,
+                          {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          }
+                        )}
+                    </span>
+                    <span className="text-gray-300">•</span>
+                    {selectedItem?.source && (
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                          sourceColors[selectedItem.source].badge
+                        }`}
+                      >
+                        {selectedItem.source.charAt(0).toUpperCase() +
+                          selectedItem.source.slice(1)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {selectedItem?.url && (
+                  <a
+                    href={selectedItem.url || "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    Open
+                    <ExternalLink className="ml-2 -mr-1 w-4 h-4" />
+                  </a>
+                )}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 mt-6 overflow-auto">
+              <div className="bg-gray-50 rounded-lg p-6">
+                {selectedItem?.title?.endsWith(".pdf") ? (
+                  <div className="flex flex-col items-center justify-center space-y-4 p-8 bg-white rounded-lg border border-gray-200">
+                    <div className="w-16 h-16 text-blue-600">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          clipRule="evenodd"
+                          d="M6 2C4.34315 2 3 3.34315 3 5V19C3 20.6569 4.34315 22 6 22H18C19.6569 22 21 20.6569 21 19V9C21 5.13401 17.866 2 14 2H6ZM6 4H13V9H19V19C19 19.5523 18.5523 20 18 20H6C5.44772 20 5 19.5523 5 19V5C5 4.44772 5.44772 4 6 4ZM15 4.10002C16.6113 4.4271 17.9413 5.52906 18.584 7H15V4.10002Z"
+                          fill="currentColor"
+                        />
+                      </svg>
+                    </div>
+                    <div className="text-center">
+                      <h3 className="text-lg font-medium text-gray-900 mb-1">
+                        {selectedItem.title}
+                      </h3>
+                      <p className="text-sm text-gray-500 mb-4">
+                        This document needs to be opened in SharePoint to view
+                        its contents
+                      </p>
+                      <a
+                        href={selectedItem.url || "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Open in SharePoint
+                        <ExternalLink className="ml-2 -mr-1 w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="prose prose-sm max-w-none">
+                    {selectedItem?.type === "email" ? (
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 text-gray-500">
+                          <Mail className="w-4 h-4" />
+                          <span className="text-sm">Email Message</span>
+                        </div>
+                        <div className="bg-white rounded-lg p-6 shadow-sm">
+                          {cleanHtmlContent(selectedItem?.content || "")
+                            .split("\n")
+                            .map((line, i) => (
+                              <p
+                                key={i}
+                                className="mb-4 text-gray-700 leading-relaxed"
+                              >
+                                {line}
+                              </p>
+                            ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-gray-700 leading-relaxed">
+                        {cleanHtmlContent(selectedItem?.content || "")}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
