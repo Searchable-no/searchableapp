@@ -19,7 +19,7 @@ import {
 import { useSession } from "@/lib/session";
 
 const navigation = [
-  { title: "Dashboard", href: "/", icon: BarChart3 },
+  { title: "Dashboard", href: "/dashboard", icon: BarChart3 },
   { title: "Search", href: "/search", icon: Search },
   { title: "Files", href: "/files", icon: FileText },
   { title: "Chats", href: "/chats", icon: MessageSquare },

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { indexMicrosoftContent, createChangeNotificationSubscriptions } from '@/lib/microsoft'
 
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID

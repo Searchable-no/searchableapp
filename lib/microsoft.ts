@@ -57,6 +57,29 @@ export async function indexMicrosoftContent(userId: string) {
       return;
     }
 
+    // Get total count of files and emails first
+    const [fileCount, emailCount] = await Promise.all([
+      getFileCount(connection.access_token),
+      getEmailCount(connection.access_token)
+    ]);
+
+    const totalItems = fileCount + emailCount;
+    console.log(`Total items to index: ${totalItems} (${fileCount} files, ${emailCount} emails)`);
+
+    // Update connection metadata with total items
+    await supabaseAdmin
+      .from('connections')
+      .update({
+        metadata: {
+          ...connection.metadata,
+          totalItems,
+          fileCount,
+          emailCount,
+          lastIndexAttempt: new Date().toISOString()
+        }
+      })
+      .eq('id', connection.id);
+
     console.log('Starting file indexing...');
     await indexFiles(connection.access_token, userId)
       .catch(error => {
@@ -75,6 +98,68 @@ export async function indexMicrosoftContent(userId: string) {
   } catch (error) {
     console.error('Error in indexMicrosoftContent:', error);
     throw error;
+  }
+}
+
+async function getFileCount(accessToken: string): Promise<number> {
+  try {
+    const response = await fetch(
+      `${GRAPH_API_ENDPOINT}/search/query`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              entityTypes: ['driveItem'],
+              query: {
+                queryString: '*',
+              },
+              fields: ['id'],
+              from: 0,
+              size: 0, // We only need the total count
+            },
+          ],
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get file count: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.value?.[0]?.hitsContainers?.[0]?.total || 0;
+  } catch (error) {
+    console.error('Error getting file count:', error);
+    return 0;
+  }
+}
+
+async function getEmailCount(accessToken: string): Promise<number> {
+  try {
+    const response = await fetch(
+      `${GRAPH_API_ENDPOINT}/me/messages/$count`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'ConsistencyLevel': 'eventual'
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get email count: ${response.statusText}`);
+    }
+
+    const count = await response.text();
+    return parseInt(count, 10) || 0;
+  } catch (error) {
+    console.error('Error getting email count:', error);
+    return 0;
   }
 }
 

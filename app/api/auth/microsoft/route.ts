@@ -10,6 +10,21 @@ const SCOPE = [
   'Sites.Read.All',           // For SharePoint site content
   'Mail.Read',                // For Outlook emails
   'User.Read',                // For basic user profile
+  'Channel.ReadBasic.All',    // For Teams channel access
+  'ChannelMessage.Read.All',  // For Teams channel messages
+  'ChannelMessage.Send',      // For sending Teams channel messages
+  'Chat.Read',                // For Teams chat messages
+  'Chat.ReadWrite',           // For Teams chat read/write
+  'ChatMessage.Read',         // For reading chat messages
+  'ChatMessage.Send',         // For sending chat messages
+  'Team.ReadBasic.All',       // For Teams membership
+  'TeamMember.Read.All',      // For reading team members
+  'TeamMember.ReadWrite.All', // For adding/removing team members
+  'Group.ReadWrite.All',      // For managing groups/teams
+  'GroupMember.ReadWrite.All', // For managing group/team members
+  'Calendars.Read',           // For calendar events
+  'Tasks.ReadWrite',          // For reading and updating Planner tasks
+  'Group.Read.All',           // For accessing Planner plans
   'offline_access',           // For refresh tokens
   'openid',                   // For authentication
   'profile',                  // For user profile info

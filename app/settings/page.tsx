@@ -13,11 +13,16 @@ interface ConnectionStatus {
   google: boolean;
 }
 
+interface IndexingProgress {
+  progress: number;
+}
+
 export default function SettingsPage() {
   const [status, setStatus] = useState<ConnectionStatus>({
     microsoft: false,
     google: false,
   });
+  const [indexingProgress, setIndexingProgress] = useState<IndexingProgress>({ progress: 0 });
   const searchParams = useSearchParams();
   const { session, loading: sessionLoading } = useSession();
 
@@ -45,11 +50,46 @@ export default function SettingsPage() {
     }
   };
 
+  // Fetch indexing progress
+  const fetchIndexingProgress = async () => {
+    if (!session?.user?.email) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/connections/indexing-status?email=${encodeURIComponent(
+          session.user.email
+        )}`
+      );
+      if (!response.ok) {
+        throw new Error("Failed to fetch indexing progress");
+      }
+      const data = await response.json();
+      setIndexingProgress(data);
+    } catch (error) {
+      console.error("Error fetching indexing progress:", error);
+    }
+  };
+
   useEffect(() => {
     if (session?.user?.email && !sessionLoading) {
       fetchConnectionStatus();
+      fetchIndexingProgress();
+      
+      // Poll indexing progress every 5 seconds if connected
+      let interval: NodeJS.Timeout;
+      if (status.microsoft) {
+        interval = setInterval(fetchIndexingProgress, 5000);
+      }
+      
+      return () => {
+        if (interval) {
+          clearInterval(interval);
+        }
+      };
     }
-  }, [session, sessionLoading]); // Fetch when session changes
+  }, [session, sessionLoading, status.microsoft]);
 
   useEffect(() => {
     const error = searchParams.get("error");
@@ -157,16 +197,29 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
-                <Button
-                  onClick={handleMicrosoftConnect}
-                  className={
-                    status.microsoft
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-[#0078d4] hover:bg-[#106ebe]"
-                  }
-                >
-                  {status.microsoft ? "Disconnect" : "Connect"}
-                </Button>
+                <div className="flex items-center gap-4">
+                  {status.microsoft && indexingProgress.progress < 100 && (
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-24 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-blue-600 transition-all duration-500 ease-out"
+                          style={{ width: `${indexingProgress.progress}%` }}
+                        />
+                      </div>
+                      <span className="text-sm text-gray-600">{indexingProgress.progress}%</span>
+                    </div>
+                  )}
+                  <Button
+                    onClick={handleMicrosoftConnect}
+                    className={
+                      status.microsoft
+                        ? "bg-red-500 hover:bg-red-600"
+                        : "bg-[#0078d4] hover:bg-[#106ebe]"
+                    }
+                  >
+                    {status.microsoft ? "Disconnect" : "Connect"}
+                  </Button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between p-4 border rounded-lg">
