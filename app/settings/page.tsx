@@ -22,7 +22,9 @@ export default function SettingsPage() {
     microsoft: false,
     google: false,
   });
-  const [indexingProgress, setIndexingProgress] = useState<IndexingProgress>({ progress: 0 });
+  const [indexingProgress, setIndexingProgress] = useState<IndexingProgress>({
+    progress: 0,
+  });
   const searchParams = useSearchParams();
   const { session, loading: sessionLoading } = useSession();
 
@@ -76,13 +78,13 @@ export default function SettingsPage() {
     if (session?.user?.email && !sessionLoading) {
       fetchConnectionStatus();
       fetchIndexingProgress();
-      
+
       // Poll indexing progress every 5 seconds if connected
       let interval: NodeJS.Timeout;
       if (status.microsoft) {
         interval = setInterval(fetchIndexingProgress, 5000);
       }
-      
+
       return () => {
         if (interval) {
           clearInterval(interval);
@@ -174,23 +176,25 @@ export default function SettingsPage() {
   return (
     <SidebarInset className="flex-1">
       <div className="flex flex-col gap-6 p-6">
-        <h1 className="text-3xl font-bold tracking-tight text-[#000000]">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">
           Settings
         </h1>
 
         <div className="space-y-6">
-          <div className="rounded-lg border border-[#ecf1f8] bg-[#ffffff] p-6">
+          <div className="rounded-lg border border-border bg-background p-6">
             <h2 className="text-xl font-semibold mb-4">Data Sources</h2>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ecf1f8] text-[#0078d4]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                     <Box className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="font-semibold">Microsoft 365</h3>
-                    <p className="text-sm text-[#8b8d97]">
+                    <h3 className="font-semibold text-foreground">
+                      Microsoft 365
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
                       {status.microsoft
                         ? "Connected to SharePoint, Teams, Outlook"
                         : "Connect to SharePoint, Teams, Outlook"}
@@ -200,22 +204,20 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-4">
                   {status.microsoft && indexingProgress.progress < 100 && (
                     <div className="flex items-center gap-2">
-                      <div className="h-2 w-24 bg-gray-200 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-blue-600 transition-all duration-500 ease-out"
+                      <div className="h-2 w-24 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500 ease-out"
                           style={{ width: `${indexingProgress.progress}%` }}
                         />
                       </div>
-                      <span className="text-sm text-gray-600">{indexingProgress.progress}%</span>
+                      <span className="text-sm text-muted-foreground">
+                        {indexingProgress.progress}%
+                      </span>
                     </div>
                   )}
                   <Button
                     onClick={handleMicrosoftConnect}
-                    className={
-                      status.microsoft
-                        ? "bg-red-500 hover:bg-red-600"
-                        : "bg-[#0078d4] hover:bg-[#106ebe]"
-                    }
+                    variant={status.microsoft ? "destructive" : "default"}
                   >
                     {status.microsoft ? "Disconnect" : "Connect"}
                   </Button>
@@ -224,12 +226,14 @@ export default function SettingsPage() {
 
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ecf1f8] text-[#ea4335]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
                     <Mail className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="font-semibold">Google Workspace</h3>
-                    <p className="text-sm text-[#8b8d97]">
+                    <h3 className="font-semibold text-foreground">
+                      Google Workspace
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
                       {status.google
                         ? "Connected to Gmail, Drive, Calendar"
                         : "Connect to Gmail, Drive, Calendar"}
@@ -238,11 +242,7 @@ export default function SettingsPage() {
                 </div>
                 <Button
                   onClick={handleGoogleConnect}
-                  className={
-                    status.google
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-[#ea4335] hover:bg-[#d33828]"
-                  }
+                  variant={status.google ? "destructive" : "default"}
                 >
                   {status.google ? "Disconnect" : "Connect"}
                 </Button>

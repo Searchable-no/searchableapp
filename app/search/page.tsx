@@ -67,18 +67,6 @@ const sourceIcons = {
   document: FileText,
 };
 
-// Source color mapping
-const sourceColors = {
-  microsoft: {
-    badge: "bg-blue-100 text-blue-800 border border-blue-200",
-    icon: "bg-blue-600 text-white",
-  },
-  google: {
-    badge: "bg-red-100 text-red-800 border border-red-200",
-    icon: "bg-red-600 text-white",
-  },
-};
-
 // Add this utility function to clean HTML content
 const cleanHtmlContent = (content: string): string => {
   // Skip cleaning if content is empty
@@ -302,10 +290,10 @@ export default function SearchPage() {
   // Show loading state while session is being fetched
   if (sessionLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-          <span className="text-gray-600">Loading...</span>
+          <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-muted-foreground">Loading...</span>
         </div>
       </div>
     );
@@ -314,19 +302,19 @@ export default function SearchPage() {
   // Show error state if session loading failed
   if (sessionError) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-red-600 mb-2">
+          <h2 className="text-xl font-semibold text-destructive mb-2">
             Error loading session
           </h2>
-          <p className="text-gray-600">{sessionError.message}</p>
+          <p className="text-muted-foreground">{sessionError.message}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 w-full">
+    <div className="min-h-screen bg-background w-full">
       <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Hero Section - Only show when no results */}
         {!results.totalCount && (
@@ -336,7 +324,7 @@ export default function SearchPage() {
             className="text-center py-16 sm:py-20"
           >
             <h1 className="text-6xl sm:text-7xl font-extrabold mb-8 leading-tight">
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600">
+              <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary via-primary/80 to-primary/60">
                 Searchable
               </span>
             </h1>
@@ -355,13 +343,13 @@ export default function SearchPage() {
                 onKeyDown={handleKeyDown}
                 onKeyPress={handleKeyPress}
                 placeholder="Search emails, documents, and more..."
-                className="w-full pl-12 pr-12 py-3 text-lg rounded-xl border-gray-200 focus:border-blue-500 focus:ring-blue-500"
+                className="w-full pl-12 pr-12 py-3 text-lg rounded-xl border-input focus:border-primary focus:ring-primary"
               />
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
               {query && (
                 <button
                   onClick={handleClearInput}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -375,16 +363,16 @@ export default function SearchPage() {
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  className="absolute left-0 right-0 mt-2 py-2 bg-white rounded-lg shadow-lg border border-gray-200 max-h-60 overflow-auto z-50"
+                  className="absolute left-0 right-0 mt-2 py-2 bg-background rounded-lg shadow-lg border border-border max-h-60 overflow-auto z-50"
                 >
                   {suggestions.map((suggestion, index) => (
                     <button
                       key={suggestion}
                       onClick={() => handleSuggestionClick(suggestion)}
-                      className={`w-full px-4 py-2 text-left hover:bg-gray-50 ${
+                      className={`w-full px-4 py-2 text-left hover:bg-muted ${
                         index === selectedSuggestionIndex
-                          ? "bg-gray-50"
-                          : "bg-white"
+                          ? "bg-muted"
+                          : "bg-background"
                       }`}
                     >
                       {highlightMatch(suggestion, query)}
@@ -429,7 +417,7 @@ export default function SearchPage() {
             animate={{ opacity: 1 }}
             className="mt-8 w-full"
           >
-            <div className="text-sm text-gray-500 mb-4">
+            <div className="text-sm text-muted-foreground mb-4">
               Found {results.totalCount} results
             </div>
 
@@ -442,15 +430,15 @@ export default function SearchPage() {
                   <div className="flex items-center gap-2 mb-4">
                     <div
                       className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-                        sourceColors[
-                          category.source as keyof typeof sourceColors
-                        ].icon
+                        category.source === "microsoft"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-destructive text-destructive-foreground"
                       }`}
                     >
                       {sourceIcons[
                         category.type as keyof typeof sourceIcons
                       ] && (
-                        <div className="h-4 w-4 text-white">
+                        <div className="h-4 w-4">
                           {React.createElement(
                             sourceIcons[
                               category.type as keyof typeof sourceIcons
@@ -459,7 +447,7 @@ export default function SearchPage() {
                         </div>
                       )}
                     </div>
-                    <h2 className="text-lg font-semibold">
+                    <h2 className="text-lg font-semibold text-foreground">
                       {category.category} ({category.count})
                     </h2>
                   </div>
@@ -470,28 +458,28 @@ export default function SearchPage() {
                         key={item.id}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 w-full hover:shadow-md transition-shadow cursor-pointer"
+                        className="bg-background rounded-lg shadow-sm border border-border p-4 w-full hover:shadow-md transition-shadow cursor-pointer"
                         onClick={() => setSelectedItem(item)}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <h3 className="text-lg font-medium mb-2 text-gray-900">
+                              <h3 className="text-lg font-medium mb-2 text-foreground">
                                 {highlightMatch(item.title, query)}
                               </h3>
                               <button
-                                className="p-1 hover:bg-gray-100 rounded-full"
+                                className="p-1 hover:bg-muted rounded-full"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setSelectedItem(item);
                                 }}
                               >
-                                <Maximize2 className="w-4 h-4 text-gray-500" />
+                                <Maximize2 className="w-4 h-4 text-muted-foreground" />
                               </button>
                             </div>
                             {item.title.endsWith(".pdf") && (
                               <div className="flex items-center gap-2 mb-3">
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-blue-50 text-blue-700 text-xs font-medium">
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-primary/10 text-primary text-xs font-medium">
                                   <svg
                                     className="w-4 h-4"
                                     viewBox="0 0 24 24"
@@ -510,8 +498,8 @@ export default function SearchPage() {
                               </div>
                             )}
                             {cleanHtmlContent(item.content) && (
-                              <div className="bg-gray-50 rounded-lg p-3 mb-3">
-                                <p className="text-sm text-gray-700 leading-relaxed">
+                              <div className="bg-muted rounded-lg p-3 mb-3">
+                                <p className="text-sm text-foreground leading-relaxed">
                                   {highlightMatch(
                                     cleanHtmlContent(item.content).substring(
                                       0,
@@ -524,7 +512,7 @@ export default function SearchPage() {
                               </div>
                             )}
                             <div className="flex items-center gap-3 text-sm">
-                              <span className="text-gray-500">
+                              <span className="text-muted-foreground">
                                 {new Date(item.lastModified).toLocaleDateString(
                                   undefined,
                                   {
@@ -534,10 +522,14 @@ export default function SearchPage() {
                                   }
                                 )}
                               </span>
-                              <span className="text-gray-300">•</span>
+                              <span className="text-muted-foreground/30">
+                                •
+                              </span>
                               <span
                                 className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                                  sourceColors[item.source].badge
+                                  item.source === "microsoft"
+                                    ? "bg-primary/10 text-primary"
+                                    : "bg-destructive/10 text-destructive"
                                 }`}
                               >
                                 {item.source.charAt(0).toUpperCase() +
@@ -545,8 +537,10 @@ export default function SearchPage() {
                               </span>
                               {item.type && (
                                 <>
-                                  <span className="text-gray-300">•</span>
-                                  <span className="text-gray-600 flex items-center gap-1">
+                                  <span className="text-muted-foreground/30">
+                                    •
+                                  </span>
+                                  <span className="text-muted-foreground flex items-center gap-1">
                                     {React.createElement(
                                       sourceIcons[
                                         item.type as keyof typeof sourceIcons
@@ -567,7 +561,7 @@ export default function SearchPage() {
                               href={item.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="shrink-0 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-2"
+                              className="shrink-0 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2"
                               onClick={(e) => e.stopPropagation()}
                             >
                               Open
@@ -588,8 +582,8 @@ export default function SearchPage() {
         {isLoading && (
           <div className="mt-8 flex justify-center w-full">
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-gray-600">Searching...</span>
+              <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-muted-foreground">Searching...</span>
             </div>
           </div>
         )}
@@ -603,11 +597,11 @@ export default function SearchPage() {
             <DialogHeader>
               <DialogTitle className="flex items-start justify-between gap-4">
                 <div className="flex-1">
-                  <h2 className="text-xl font-semibold text-gray-900">
+                  <h2 className="text-xl font-semibold text-foreground">
                     {selectedItem?.title}
                   </h2>
                   <div className="flex items-center gap-3 mt-2">
-                    <span className="text-sm text-gray-500">
+                    <span className="text-sm text-muted-foreground">
                       {selectedItem?.lastModified &&
                         new Date(selectedItem.lastModified).toLocaleDateString(
                           undefined,
@@ -618,11 +612,13 @@ export default function SearchPage() {
                           }
                         )}
                     </span>
-                    <span className="text-gray-300">•</span>
+                    <span className="text-muted-foreground/30">•</span>
                     {selectedItem?.source && (
                       <span
                         className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                          sourceColors[selectedItem.source].badge
+                          selectedItem.source === "microsoft"
+                            ? "bg-primary/10 text-primary"
+                            : "bg-destructive/10 text-destructive"
                         }`}
                       >
                         {selectedItem.source.charAt(0).toUpperCase() +
@@ -636,7 +632,7 @@ export default function SearchPage() {
                     href={selectedItem.url || "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
                   >
                     Open
                     <ExternalLink className="ml-2 -mr-1 w-4 h-4" />
@@ -645,10 +641,10 @@ export default function SearchPage() {
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 mt-6 overflow-auto">
-              <div className="bg-gray-50 rounded-lg p-6">
+              <div className="bg-muted rounded-lg p-6">
                 {selectedItem?.title?.endsWith(".pdf") ? (
-                  <div className="flex flex-col items-center justify-center space-y-4 p-8 bg-white rounded-lg border border-gray-200">
-                    <div className="w-16 h-16 text-blue-600">
+                  <div className="flex flex-col items-center justify-center space-y-4 p-8 bg-background rounded-lg border border-border">
+                    <div className="w-16 h-16 text-primary">
                       <svg
                         viewBox="0 0 24 24"
                         fill="none"
@@ -663,10 +659,10 @@ export default function SearchPage() {
                       </svg>
                     </div>
                     <div className="text-center">
-                      <h3 className="text-lg font-medium text-gray-900 mb-1">
+                      <h3 className="text-lg font-medium text-foreground mb-1">
                         {selectedItem.title}
                       </h3>
-                      <p className="text-sm text-gray-500 mb-4">
+                      <p className="text-sm text-muted-foreground mb-4">
                         This document needs to be opened in SharePoint to view
                         its contents
                       </p>
@@ -674,7 +670,7 @@ export default function SearchPage() {
                         href={selectedItem.url || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-primary-foreground bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
                       >
                         Open in SharePoint
                         <ExternalLink className="ml-2 -mr-1 w-4 h-4" />
@@ -685,17 +681,17 @@ export default function SearchPage() {
                   <div className="prose prose-sm max-w-none">
                     {selectedItem?.type === "email" ? (
                       <div className="space-y-4">
-                        <div className="flex items-center gap-2 text-gray-500">
+                        <div className="flex items-center gap-2 text-muted-foreground">
                           <Mail className="w-4 h-4" />
                           <span className="text-sm">Email Message</span>
                         </div>
-                        <div className="bg-white rounded-lg p-6 shadow-sm">
+                        <div className="bg-background rounded-lg p-6 shadow-sm">
                           {cleanHtmlContent(selectedItem?.content || "")
                             .split("\n")
                             .map((line, i) => (
                               <p
                                 key={i}
-                                className="mb-4 text-gray-700 leading-relaxed"
+                                className="mb-4 text-foreground leading-relaxed"
                               >
                                 {line}
                               </p>
@@ -703,7 +699,7 @@ export default function SearchPage() {
                         </div>
                       </div>
                     ) : (
-                      <div className="text-gray-700 leading-relaxed">
+                      <div className="text-foreground leading-relaxed">
                         {cleanHtmlContent(selectedItem?.content || "")}
                       </div>
                     )}

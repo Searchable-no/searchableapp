@@ -40,10 +40,12 @@ const ResultIcon: FC<{ type: string; className?: string }> = ({
 };
 
 const SourceBadge: FC<{ source: string }> = ({ source }) => {
-  const bgColor = source === "microsoft" ? "bg-blue-50" : "bg-red-50";
-  const textColor = source === "microsoft" ? "text-blue-700" : "text-red-700";
+  const bgColor =
+    source === "microsoft" ? "bg-primary/10" : "bg-destructive/10";
+  const textColor =
+    source === "microsoft" ? "text-primary" : "text-destructive";
   const borderColor =
-    source === "microsoft" ? "border-blue-100" : "border-red-100";
+    source === "microsoft" ? "border-primary/20" : "border-destructive/20";
   return (
     <span
       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${textColor} ${borderColor} border`}
@@ -85,9 +87,9 @@ const ContentPreview: FC<{ content?: string; type: string }> = ({
   return (
     <div className="mt-3">
       <div className="relative">
-        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-100 to-blue-50 rounded-l" />
+        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-primary/20 to-primary/10 rounded-l" />
         <div className="pl-4 pr-2">
-          <p className="text-sm text-gray-600 line-clamp-3 leading-relaxed">
+          <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
             {displayContent}
           </p>
         </div>
@@ -102,18 +104,18 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
       <div className="space-y-6">
         {[...Array(3)].map((_, i) => (
           <div key={i} className="animate-pulse">
-            <div className="h-5 bg-gray-200 rounded w-1/3 mb-6" />
+            <div className="h-5 bg-muted rounded w-1/3 mb-6" />
             <div className="space-y-4">
               {[...Array(2)].map((_, j) => (
-                <div key={j} className="bg-white rounded-xl p-4 shadow-sm">
+                <div key={j} className="bg-background rounded-xl p-4 shadow-sm">
                   <div className="flex gap-4">
-                    <div className="w-5 h-5 bg-gray-200 rounded-full" />
+                    <div className="w-5 h-5 bg-muted rounded-full" />
                     <div className="flex-1 space-y-3">
-                      <div className="h-4 bg-gray-200 rounded w-3/4" />
-                      <div className="h-3 bg-gray-200 rounded w-1/4" />
+                      <div className="h-4 bg-muted rounded w-3/4" />
+                      <div className="h-3 bg-muted rounded w-1/4" />
                       <div className="space-y-2">
-                        <div className="h-3 bg-gray-200 rounded" />
-                        <div className="h-3 bg-gray-200 rounded w-5/6" />
+                        <div className="h-3 bg-muted rounded" />
+                        <div className="h-3 bg-muted rounded w-5/6" />
                       </div>
                     </div>
                   </div>
@@ -129,13 +131,13 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
   if (!results.query) {
     return (
       <div className="text-center py-16">
-        <div className="bg-blue-50/50 rounded-full w-16 h-16 mx-auto flex items-center justify-center mb-4">
-          <Search className="h-8 w-8 text-blue-500" />
+        <div className="bg-primary/10 rounded-full w-16 h-16 mx-auto flex items-center justify-center mb-4">
+          <Search className="h-8 w-8 text-primary" />
         </div>
-        <h3 className="text-xl font-semibold text-gray-900 mb-2">
+        <h3 className="text-xl font-semibold text-foreground mb-2">
           Start searching
         </h3>
-        <p className="text-sm text-gray-500 max-w-sm mx-auto">
+        <p className="text-sm text-muted-foreground max-w-sm mx-auto">
           Enter a search term to find content across your connected services
         </p>
       </div>
@@ -145,14 +147,15 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
   if (results.totalCount === 0) {
     return (
       <div className="text-center py-16">
-        <div className="bg-gray-50 rounded-full w-16 h-16 mx-auto flex items-center justify-center mb-4">
-          <Search className="h-8 w-8 text-gray-400" />
+        <div className="bg-muted rounded-full w-16 h-16 mx-auto flex items-center justify-center mb-4">
+          <Search className="h-8 w-8 text-muted-foreground" />
         </div>
-        <h3 className="text-xl font-semibold text-gray-900 mb-2">
+        <h3 className="text-xl font-semibold text-foreground mb-2">
           No results found
         </h3>
-        <p className="text-sm text-gray-500 max-w-sm mx-auto">
-          Try adjusting your search or filters to find what you're looking for
+        <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+          Try adjusting your search or filters to find what you&apos;re looking
+          for
         </p>
       </div>
     );
@@ -162,15 +165,15 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-900">
+          <h2 className="text-lg font-semibold text-foreground">
             {results.totalCount} results
           </h2>
-          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-md">
-            "{results.query}"
+          <span className="text-sm text-muted-foreground bg-muted px-2 py-1 rounded-md">
+            &ldquo;{results.query}&rdquo;
           </span>
         </div>
         {results.dateRange !== "all" && (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Clock className="w-4 h-4" />
             <span>
               {results.dateRange
@@ -185,14 +188,17 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
         <div key={category.category} className="space-y-4">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <ResultIcon type={category.type} className="text-gray-400" />
-              <h3 className="text-sm font-medium text-gray-700">
+              <ResultIcon
+                type={category.type}
+                className="text-muted-foreground"
+              />
+              <h3 className="text-sm font-medium text-foreground">
                 {category.type === "email" ? "Emails" : "Documents"}
               </h3>
             </div>
             <SourceBadge source={category.source} />
-            <span className="text-sm text-gray-400">•</span>
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-muted-foreground">•</span>
+            <span className="text-sm text-muted-foreground">
               {category.count} results
             </span>
           </div>
@@ -201,14 +207,14 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
             {category.items.map((item) => (
               <div
                 key={item.id}
-                className="group bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-200"
+                className="group bg-background rounded-xl p-4 shadow-sm hover:shadow-md transition-all duration-200"
               >
                 <div className="flex gap-4">
                   <div className="flex-shrink-0 mt-1">
-                    <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+                    <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
                       <ResultIcon
                         type={item.type}
-                        className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors"
+                        className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors"
                       />
                     </div>
                   </div>
@@ -218,15 +224,15 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
                         href={item.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-base font-medium text-gray-900 hover:text-blue-600 truncate group-hover:underline decoration-blue-300 decoration-2 underline-offset-2"
+                        className="text-base font-medium text-foreground hover:text-primary truncate group-hover:underline decoration-primary/30 decoration-2 underline-offset-2"
                       >
                         {item.title}
                       </a>
-                      <Link className="w-3.5 h-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <Link className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
                     <div className="flex items-center gap-2 mt-1">
-                      <Clock className="w-3.5 h-3.5 text-gray-400" />
-                      <p className="text-sm text-gray-500">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
                         {format(
                           new Date(item.lastModified),
                           "MMM d, yyyy, h:mm a"

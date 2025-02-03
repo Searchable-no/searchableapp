@@ -45,9 +45,9 @@ export function AppSidebar() {
   }
 
   return (
-    <div className="flex h-full w-[280px] flex-col bg-white border-r border-gray-100">
-      <div className="flex items-center gap-3 p-6 border-b border-gray-100">
-        <div className="relative h-10 w-10 overflow-hidden rounded-xl bg-gradient-to-br from-blue-50 to-blue-100">
+    <div className="flex h-full w-[280px] flex-col bg-sidebar border-r border-sidebar-border">
+      <div className="flex items-center gap-3 p-6 border-b border-sidebar-border">
+        <div className="relative h-10 w-10 overflow-hidden rounded-xl bg-gradient-to-br from-primary/20 to-primary/10">
           <img
             src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Searchable-oEMTymeOqXxqDzlBGz8NHto1b6GOs0.png"
             alt="Avatar"
@@ -55,10 +55,12 @@ export function AppSidebar() {
           />
         </div>
         <div className="flex flex-col">
-          <span className="text-sm font-semibold text-gray-900">
+          <span className="text-sm font-semibold text-sidebar-foreground">
             {session.user.email?.split("@")[0] || "User"}
           </span>
-          <span className="text-xs text-gray-500">{session.user.email}</span>
+          <span className="text-xs text-sidebar-foreground/60">
+            {session.user.email}
+          </span>
         </div>
       </div>
 
@@ -71,15 +73,15 @@ export function AppSidebar() {
               href={item.href}
               className={`group flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium transition-all ${
                 isActive
-                  ? "bg-gradient-to-r from-blue-50 to-blue-50/50 text-blue-600"
-                  : "text-gray-600 hover:bg-gray-50"
+                  ? "bg-sidebar-accent text-sidebar-primary"
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
               }`}
             >
               <item.icon
                 className={`h-5 w-5 transition-colors ${
                   isActive
-                    ? "text-blue-600"
-                    : "text-gray-400 group-hover:text-gray-600"
+                    ? "text-sidebar-primary"
+                    : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
                 }`}
               />
               {item.title}
@@ -88,16 +90,16 @@ export function AppSidebar() {
         })}
       </nav>
 
-      <div className="border-t border-gray-100 p-4 space-y-1">
+      <div className="border-t border-sidebar-border p-4 space-y-1">
         {mounted && (
           <button
             onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-            className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
           >
             {theme === "light" ? (
-              <Moon className="h-5 w-5 text-gray-400" />
+              <Moon className="h-5 w-5 text-sidebar-foreground/60" />
             ) : (
-              <Sun className="h-5 w-5 text-gray-400" />
+              <Sun className="h-5 w-5 text-sidebar-foreground/60" />
             )}
             {theme === "light" ? "Dark mode" : "Light mode"}
           </button>
@@ -105,9 +107,9 @@ export function AppSidebar() {
 
         <Link
           href="/logout"
-          className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
         >
-          <LogOut className="h-5 w-5 text-gray-400" />
+          <LogOut className="h-5 w-5 text-sidebar-foreground/60" />
           Logout
         </Link>
       </div>
