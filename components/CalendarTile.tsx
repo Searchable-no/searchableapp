@@ -1,130 +1,124 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { Calendar, ExternalLink, ChevronRight, Video } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { formatDate } from '@/lib/utils'
-import { CalendarEvent } from '@/lib/microsoft-graph'
-import { CalendarEventDialog } from '@/components/CalendarEventDialog'
+import { useState } from "react";
+import { Calendar as CalendarIcon, Video } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { formatDate } from "@/lib/utils";
+import { CalendarEvent } from "@/lib/microsoft-graph";
+import { CalendarEventDialog } from "@/components/CalendarEventDialog";
 
 interface CalendarTileProps {
-  events: CalendarEvent[]
-  isLoading: boolean
-}
-
-function formatEventTime(dateTime: string): string {
-  return new Date(dateTime).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  })
+  events: CalendarEvent[];
+  isLoading: boolean;
 }
 
 export function CalendarTile({ events, isLoading }: CalendarTileProps) {
-  const [showAll, setShowAll] = useState(false)
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
-  const displayEvents = showAll ? events : events.slice(0, 5)
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(
+    null
+  );
 
   if (isLoading) {
     return (
-      <Card className="h-full flex flex-col">
-        <CardHeader className="flex-none pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Calendar className="h-4 w-4" />
-            Calendar
+      <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
+        <CardHeader className="py-2 px-3 border-b flex-none">
+          <CardTitle className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-primary/10">
+                <CalendarIcon className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <span>Calendar</span>
+            </div>
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex-1">
-          <div className="space-y-2 h-full min-h-[200px]">
-            <div className="h-14 animate-pulse rounded bg-muted"></div>
-            <div className="h-14 animate-pulse rounded bg-muted"></div>
+        <CardContent className="p-3 flex-1">
+          <div className="space-y-3">
+            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
           </div>
         </CardContent>
       </Card>
-    )
+    );
   }
 
   return (
-    <Card className="h-full">
-      <CardHeader className="py-2 px-3">
+    <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
+      <CardHeader className="py-2 px-3 border-b flex-none">
         <CardTitle className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-1">
-            <Calendar className="h-3 w-3" />
-            Calendar
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-md bg-primary/10">
+              <CalendarIcon className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <span>Calendar</span>
           </div>
           {events.length > 0 && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-6 text-xs px-2"
-              onClick={() => window.open('https://outlook.office.com/calendar/view/day', '_blank')}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs px-2 rounded-md hover:bg-muted/50"
+              onClick={() =>
+                window.open(
+                  "https://outlook.office.com/calendar/view/day",
+                  "_blank"
+                )
+              }
             >
               Open Calendar
-              <ChevronRight className="ml-1 h-2 w-2" />
+              <CalendarIcon className="ml-1 h-2 w-2" />
             </Button>
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-2 overflow-auto max-h-[250px]">
-        <div className="space-y-1">
-          {events.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No events today</p>
-          ) : (
-            <>
-              <div className="space-y-1">
-                {displayEvents.map((event) => (
-                  <div 
-                    key={event.id} 
-                    className="group relative rounded-sm border p-1.5 hover:bg-muted/50 cursor-pointer"
-                    onClick={() => setSelectedEvent(event)}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs font-medium truncate">
+      <CardContent className="p-3 flex-1 overflow-y-auto">
+        {events.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <CalendarIcon className="h-8 w-8 mb-3 opacity-50" />
+            <p className="text-sm">No events today</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {events.map((event) => (
+              <div
+                key={event.id}
+                className="group p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                onClick={() => setSelectedEvent(event)}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                    <CalendarIcon className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium truncate">
                           {event.subject}
                         </p>
-                        {event.isOnline && (
-                          <Video className="h-2 w-2 text-muted-foreground" />
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            window.open(event.webLink, '_blank')
-                          }}
-                        >
-                          <ExternalLink className="h-2 w-2" />
-                          <span className="sr-only">Open event</span>
-                        </Button>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(event.start.dateTime)} -{" "}
+                            {formatDate(event.end.dateTime)}
+                          </p>
+                          {event.isOnline && (
+                            <div className="flex items-center gap-1 text-xs text-primary">
+                              <Video className="h-3 w-3" />
+                              <span>Online</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                      <span>{formatEventTime(event.start.dateTime)}</span>
-                      {event.location?.displayName && (
-                        <span className="truncate ml-2">{event.location.displayName}</span>
-                      )}
-                    </div>
+                    {event.location?.displayName && (
+                      <p className="text-xs text-muted-foreground line-clamp-1 mt-1">
+                        📍 {event.location.displayName}
+                      </p>
+                    )}
                   </div>
-                ))}
+                </div>
               </div>
-              {events.length > 5 && (
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="w-full text-xs h-6"
-                  onClick={() => setShowAll(!showAll)}
-                >
-                  {showAll ? 'Show Less' : `Show ${events.length - 5} More`}
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </CardContent>
       {selectedEvent && (
         <CalendarEventDialog
@@ -134,5 +128,5 @@ export function CalendarTile({ events, isLoading }: CalendarTileProps) {
         />
       )}
     </Card>
-  )
-} 
+  );
+}

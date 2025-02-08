@@ -1,142 +1,161 @@
-'use client'
+"use client";
 
-import { TeamsMessage } from '@/lib/microsoft-graph'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { MessageSquare, ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { useState } from 'react'
-import { TeamsMessageDialog } from '@/components/TeamsMessageDialog'
-import { formatDistanceToNow } from 'date-fns'
+import { TeamsMessage } from "@/lib/microsoft-graph";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MessageSquare, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { TeamsMessageDialog } from "@/components/TeamsMessageDialog";
+import { formatDistanceToNow } from "date-fns";
+import { cn } from "@/lib/utils";
 
 interface TeamsMessageTileProps {
-  messages: TeamsMessage[]
-  isLoading: boolean
+  messages: TeamsMessage[];
+  isLoading: boolean;
 }
 
 function formatMessageContent(content: string): string {
   // Remove HTML tags
-  const withoutTags = content.replace(/<[^>]*>/g, '')
-  
+  const withoutTags = content.replace(/<[^>]*>/g, "");
+
   // Replace multiple spaces with a single space
-  const withoutExtraSpaces = withoutTags.replace(/\s+/g, ' ')
-  
+  const withoutExtraSpaces = withoutTags.replace(/\s+/g, " ");
+
   // Replace markdown-style links [text](url) with just the text
-  const withoutLinks = withoutExtraSpaces.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-  
+  const withoutLinks = withoutExtraSpaces.replace(
+    /\[([^\]]+)\]\([^)]+\)/g,
+    "$1"
+  );
+
   // Decode HTML entities
   const decoded = withoutLinks
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-  
-  return decoded.trim()
+    .replace(/&#39;/g, "'");
+
+  return decoded.trim();
 }
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  
-  // If the message is from today
-  if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    })
+export function TeamsMessageTile({
+  messages,
+  isLoading,
+}: TeamsMessageTileProps) {
+  const [localMessages, setLocalMessages] = useState<TeamsMessage[]>(messages);
+  const [selectedMessage, setSelectedMessage] = useState<TeamsMessage | null>(
+    null
+  );
+
+  const handleMessageRead = (message: TeamsMessage) => {
+    setLocalMessages((prevMessages) =>
+      prevMessages.map((msg) =>
+        msg.id === message.id ? { ...msg, isRead: true } : msg
+      )
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
+        <CardHeader className="py-2 px-3 border-b flex-none">
+          <CardTitle className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-md bg-primary/10">
+                <MessageSquare className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <span>Teams Messages</span>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-3 flex-1">
+          <div className="space-y-3">
+            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
+          </div>
+        </CardContent>
+      </Card>
+    );
   }
-  
-  // If the message is from yesterday
-  if (date.toDateString() === yesterday.toDateString()) {
-    return 'Yesterday'
-  }
-  
-  // For older messages
-  return date.toLocaleDateString('en-US', { 
-    day: 'numeric',
-    month: 'short'
-  })
-}
-
-function groupMessagesByTeam(messages: TeamsMessage[]) {
-  const groups: { [key: string]: TeamsMessage[] } = {}
-  
-  messages.forEach(message => {
-    const key = message.teamDisplayName || message.channelDisplayName || 'Other'
-    if (!groups[key]) {
-      groups[key] = []
-    }
-    groups[key].push(message)
-  })
-  
-  return groups
-}
-
-export function TeamsMessageTile({ messages, isLoading }: TeamsMessageTileProps) {
-  const [selectedMessage, setSelectedMessage] = useState<TeamsMessage | null>(null)
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Teams Messages</CardTitle>
-        <CardDescription className="text-xs">Recent messages from your Teams chats</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {isLoading ? (
-            <div className="flex justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+    <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
+      <CardHeader className="py-2 px-3 border-b flex-none">
+        <CardTitle className="flex items-center justify-between text-sm">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-md bg-primary/10">
+              <MessageSquare className="h-3.5 w-3.5 text-primary" />
             </div>
-          ) : messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-4 text-center">
-              <MessageSquare className="h-8 w-8 text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">No recent messages</p>
-            </div>
-          ) : (
-            <>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/50 cursor-pointer"
-                  onClick={() => setSelectedMessage(message)}
-                >
-                  <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                    <MessageSquare className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium truncate">
-                        {message.from?.user?.displayName || 'Unknown User'}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(message.createdDateTime))}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground line-clamp-2">
-                      {message.content ? formatMessageContent(message.content) : ''}
-                    </p>
-                    {message.channelDisplayName && (
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        # {message.channelDisplayName}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </>
+            <span>Teams Messages</span>
+          </div>
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs px-2 rounded-md hover:bg-muted/50"
+              onClick={() =>
+                window.open("https://teams.microsoft.com", "_blank")
+              }
+            >
+              Open Teams
+              <ChevronRight className="ml-1 h-2 w-2" />
+            </Button>
           )}
-        </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 flex-1 overflow-y-auto">
+        {localMessages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <MessageSquare className="h-8 w-8 mb-3 opacity-50" />
+            <p className="text-sm">No recent messages</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {localMessages.map((message) => (
+              <div
+                key={message.id}
+                className={cn(
+                  "p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                )}
+                onClick={() => setSelectedMessage(message)}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm line-clamp-2">
+                        {formatMessageContent(
+                          message.content || message.body?.content || ""
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-xs text-muted-foreground">
+                        {message.from?.user?.displayName || "Unknown"}
+                      </p>
+                      <span className="text-xs text-muted-foreground">•</span>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(message.createdDateTime))}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
       {selectedMessage && (
         <TeamsMessageDialog
           message={selectedMessage}
           isOpen={!!selectedMessage}
-          onClose={() => setSelectedMessage(null)}
+          onClose={() => {
+            handleMessageRead(selectedMessage);
+            setSelectedMessage(null);
+          }}
         />
       )}
     </Card>
-  )
-} 
+  );
+}

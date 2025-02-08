@@ -1,7 +1,5 @@
-'use server'
-
 import { Client } from '@microsoft/microsoft-graph-client'
-import { getValidAccessToken } from './supabase-server'
+import { getValidAccessToken } from './server-actions'
 
 const GRAPH_API_ENDPOINT = 'https://graph.microsoft.com/v1.0'
 const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
@@ -41,6 +39,7 @@ export interface TeamsMessage {
   channelDisplayName?: string
   teamDisplayName?: string
   webUrl?: string
+  isRead?: boolean
 }
 
 export interface TeamsChannelMessage extends TeamsMessage {
@@ -59,6 +58,9 @@ export interface RecentFile {
       displayName: string
       id: string
     }
+  }
+  parentReference?: {
+    driveId?: string
   }
 }
 
@@ -200,8 +202,9 @@ export async function getRecentEmails(userId: string) {
     console.log('Graph client initialized')
 
     const response = await graphClient
-      .api('/me/messages')
-      .select('id,subject,from,receivedDateTime,bodyPreview,webLink')
+      .api('/me/mailFolders/inbox/messages')
+      .select('id,subject,from,receivedDateTime,bodyPreview,webLink,isRead')
+      .filter('isDraft eq false')
       .top(10)
       .orderby('receivedDateTime DESC')
       .get()
@@ -271,149 +274,105 @@ export async function getRecentTeamsMessages(userId: string) {
   }
 }
 
+interface ChatMessage {
+  lastMessagePreview?: {
+    id: string
+    body: {
+      content: string
+    }
+    from: any
+  }
+}
+
+interface MessageResponse {
+  messageType?: string
+  body?: {
+    content: string
+  }
+  from?: {
+    user?: {
+      displayName: string
+    }
+  }
+  id: string
+  createdDateTime: string
+  webUrl?: string
+}
+
 export async function getRecentTeamsChannelMessages(userId: string) {
-  console.log('Starting to fetch Teams channel messages from Microsoft Graph...')
+  console.log('Starting to fetch Teams channel messages...')
   
   try {
     const accessToken = await getValidAccessToken(userId)
-    console.log('Got valid access token:', accessToken.substring(0, 10) + '...')
-
     const graphClient = await getGraphClient(accessToken)
-    console.log('Graph client initialized')
 
-    // Test basic Teams API access
-    try {
-      console.log('Testing Teams API access...')
-      const testResponse = await graphClient
-        .api('/me/joinedTeams')
-        .select('id,displayName')
-        .get()
-      
-      console.log('Teams API test response:', {
-        status: 'success',
-        teamsCount: testResponse?.value?.length || 0,
-        teams: testResponse?.value?.map((t: any) => t.displayName) || []
-      })
-    } catch (testError: any) {
-      console.error('Teams API test failed:', {
-        error: testError,
-        statusCode: testError.statusCode,
-        message: testError.message,
-        code: testError.code,
-        requestId: testError.requestId,
-        body: JSON.stringify(testError.body, null, 2)
-      })
+    // Get all teams the user is part of
+    const teamsResponse = await graphClient
+      .api('/me/joinedTeams')
+      .get()
+
+    if (!teamsResponse?.value) {
+      console.log('No teams found')
       return []
     }
 
-    // First get all teams the user is part of
-    console.log('Fetching teams...')
-    try {
-      const teamsResponse = await graphClient
-        .api('/me/joinedTeams')
+    const messages: TeamsChannelMessage[] = []
+
+    // For each team, get the channels and their messages
+    for (const team of teamsResponse.value) {
+      const channelsResponse = await graphClient
+        .api(`/teams/${team.id}/channels`)
         .get()
-      
-      console.log('Teams response:', JSON.stringify(teamsResponse, null, 2))
 
-      if (!teamsResponse?.value) {
-        console.error('No teams found in response:', teamsResponse)
-        return []
-      }
+      if (channelsResponse?.value) {
+        for (const channel of channelsResponse.value) {
+          try {
+            const messagesResponse = await graphClient
+              .api(`/teams/${team.id}/channels/${channel.id}/messages`)
+              .top(5)
+              .get()
 
-      const messages: TeamsChannelMessage[] = []
+            if (messagesResponse?.value) {
+              const channelMessages = messagesResponse.value
+                .filter((msg: MessageResponse) => msg.messageType === 'message')
+                .map((msg: MessageResponse) => ({
+                  id: msg.id,
+                  content: msg.body?.content,
+                  from: {
+                    user: {
+                      displayName: msg.from?.user?.displayName || 'Unknown User'
+                    }
+                  },
+                  createdDateTime: msg.createdDateTime,
+                  channelIdentity: {
+                    channelId: channel.id,
+                    teamId: team.id
+                  },
+                  teamName: team.displayName,
+                  channelName: channel.displayName,
+                  webUrl: msg.webUrl,
+                  isRead: true // Default all messages to read since we can't reliably get read status
+                }))
 
-      // For each team, get the channels and their messages
-      for (const team of teamsResponse.value) {
-        console.log(`Fetching channels for team: ${team.displayName} (${team.id})`)
-        
-        try {
-          const channelsResponse = await graphClient
-            .api(`/teams/${team.id}/channels`)
-            .get()
-
-          console.log(`Channels response for team ${team.displayName}:`, JSON.stringify(channelsResponse, null, 2))
-
-          if (channelsResponse?.value) {
-            for (const channel of channelsResponse.value) {
-              console.log(`Fetching messages for channel: ${channel.displayName} in team ${team.displayName}`)
-              
-              try {
-                const messagesResponse = await graphClient
-                  .api(`/teams/${team.id}/channels/${channel.id}/messages`)
-                  .top(5)
-                  .get()
-
-                console.log(`Messages response for channel ${channel.displayName}:`, JSON.stringify(messagesResponse, null, 2))
-
-                if (messagesResponse?.value) {
-                  const channelMessages = messagesResponse.value.map((msg: any) => ({
-                    id: msg.id,
-                    content: msg.body.content,
-                    from: {
-                      user: {
-                        displayName: msg.from?.user?.displayName || 'Unknown User',
-                        id: msg.from?.user?.id
-                      }
-                    },
-                    createdDateTime: msg.createdDateTime,
-                    channelIdentity: {
-                      channelId: channel.id,
-                      teamId: team.id
-                    },
-                    teamName: team.displayName,
-                    channelName: channel.displayName,
-                    webUrl: msg.webUrl
-                  }))
-                  messages.push(...channelMessages)
-                }
-              } catch (channelError: any) {
-                console.error(`Error fetching messages for channel ${channel.displayName}:`, {
-                  error: channelError,
-                  statusCode: channelError.statusCode,
-                  message: channelError.message,
-                  code: channelError.code,
-                  requestId: channelError.requestId,
-                  body: JSON.stringify(channelError.body, null, 2)
-                })
-              }
+              messages.push(...channelMessages)
             }
+          } catch (error) {
+            console.error(`Error fetching messages for channel ${channel.displayName}:`, error)
+            continue
           }
-        } catch (channelsError: any) {
-          console.error(`Error fetching channels for team ${team.displayName}:`, {
-            error: channelsError,
-            statusCode: channelsError.statusCode,
-            message: channelsError.message,
-            code: channelsError.code,
-            requestId: channelsError.requestId,
-            body: JSON.stringify(channelsError.body, null, 2)
-          })
         }
       }
-
-      console.log('Total channel messages found:', messages.length)
-      return messages
-
-    } catch (teamsError: any) {
-      console.error('Error fetching teams:', {
-        error: teamsError,
-        statusCode: teamsError.statusCode,
-        message: teamsError.message,
-        code: teamsError.code,
-        requestId: teamsError.requestId,
-        body: JSON.stringify(teamsError.body, null, 2)
-      })
-      return []
     }
 
-  } catch (error: any) {
-    console.error('Error in getRecentTeamsChannelMessages:', {
-      error,
-      statusCode: error.statusCode,
-      message: error.message,
-      code: error.code,
-      requestId: error.requestId,
-      body: JSON.stringify(error.body, null, 2)
-    })
+    // Sort all messages by date and return the most recent
+    return messages
+      .sort((a: TeamsChannelMessage, b: TeamsChannelMessage) => 
+        new Date(b.createdDateTime).getTime() - new Date(a.createdDateTime).getTime()
+      )
+      .slice(0, 10)
+
+  } catch (error) {
+    console.error('Error in getRecentTeamsChannelMessages:', error)
     return []
   }
 }
@@ -544,14 +503,14 @@ export async function getCalendarEvents(userId: string): Promise<CalendarEvent[]
     const graphClient = await getGraphClient(accessToken)
     console.log('Graph client initialized for calendar events')
     
-    // Get date range for the next 7 days
+    // Get date range for today and the next 5 days
     const now = new Date()
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const endOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59, 999)
+    const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 5, 23, 59, 59, 999)
     
     console.log('Fetching calendar events between:', {
       start: startOfToday.toISOString(),
-      end: endOfWeek.toISOString()
+      end: endDate.toISOString()
     })
 
     // First get all calendars to find the primary one
@@ -564,14 +523,15 @@ export async function getCalendarEvents(userId: string): Promise<CalendarEvent[]
       calendarCount: calendarsResponse?.value?.length || 0,
       calendars: calendarsResponse?.value?.map((c: any) => ({
         id: c.id,
-        name: c.name
+        name: c.name,
+        isDefault: c.isDefaultCalendar
       }))
     })
 
-    // Find the primary calendar (named "Kalender")
-    const primaryCalendar = calendarsResponse?.value?.find((c: any) => c.name === 'Kalender')
+    // Find the primary calendar (either default calendar or first available)
+    const primaryCalendar = calendarsResponse?.value?.find((c: any) => c.isDefaultCalendar) || calendarsResponse?.value?.[0]
     if (!primaryCalendar) {
-      console.error('Primary calendar not found')
+      console.error('No calendars found')
       return []
     }
 
@@ -579,8 +539,9 @@ export async function getCalendarEvents(userId: string): Promise<CalendarEvent[]
     const response = await graphClient
       .api(`/me/calendars/${primaryCalendar.id}/events`)
       .select('id,subject,start,end,location,webLink,organizer,isOnlineMeeting')
-      .filter(`start/dateTime ge '${startOfToday.toISOString()}' and end/dateTime le '${endOfWeek.toISOString()}'`)
+      .filter(`start/dateTime ge '${now.toISOString()}' and end/dateTime le '${endDate.toISOString()}'`)
       .orderby('start/dateTime')
+      .top(25)
       .get()
 
     console.log('Calendar events API response:', {
@@ -1152,6 +1113,7 @@ export interface SearchResult {
   size?: number;
   type: 'file' | 'folder' | 'email' | 'chat' | 'channel' | 'planner';
   preview?: string;
+  score?: number;
   from?: {
     name?: string;
     email?: string;
@@ -1160,9 +1122,53 @@ export interface SearchResult {
     team?: string;
     channel?: string;
   };
+  createdBy?: {
+    user: {
+      displayName: string;
+    }
+  };
+  lastModifiedBy?: {
+    user: {
+      displayName: string;
+    }
+  };
 }
 
-export async function searchSharePointFiles(userId: string, query: string): Promise<SearchResult[]> {
+export interface SharePointSite {
+  id: string;
+  name: string;
+  displayName: string;
+  webUrl: string;
+}
+
+export async function getSharePointSites(userId: string): Promise<SharePointSite[]> {
+  try {
+    const accessToken = await getValidAccessToken(userId);
+    const graphClient = await getGraphClient(accessToken);
+    
+    const sitesResponse = await graphClient
+      .api('/sites?search=*')
+      .select('id,name,displayName,webUrl')
+      .get();
+
+    return sitesResponse.value.map((site: any) => ({
+      id: site.id,
+      name: site.name,
+      displayName: site.displayName || site.name,
+      webUrl: site.webUrl
+    }));
+  } catch (error) {
+    console.error('Error fetching SharePoint sites:', error);
+    throw error;
+  }
+}
+
+export async function searchSharePointFiles(
+  userId: string, 
+  query: string,
+  siteId?: string,
+  contentTypes?: ('file' | 'folder' | 'email' | 'chat' | 'channel' | 'planner')[]
+): Promise<SearchResult[]> {
   try {
     const accessToken = await getValidAccessToken(userId);
     const graphClient = await getGraphClient(accessToken);
@@ -1175,139 +1181,213 @@ export async function searchSharePointFiles(userId: string, query: string): Prom
         requests: [{
           entityTypes: ['driveItem'],
           query: {
-            queryString: query
+            queryString: `${query} OR filename:${query} OR filetype:${query} OR title:${query} OR tags:${query} OR content:${query}`,
           },
+          fields: [
+            'id',
+            'name',
+            'webUrl',
+            'lastModifiedDateTime',
+            'size',
+            'createdBy',
+            'lastModifiedBy',
+            'parentReference',
+            'content',
+            'title',
+            'metadata'
+          ],
           from: 0,
-          size: 25
+          size: 25,
+          ...(siteId && {
+            queryContext: {
+              siteId: siteId
+            }
+          })
         }]
       });
 
     if (fileSearchResponse.value?.[0]?.hitsContainers?.[0]?.hits) {
-      results.push(...fileSearchResponse.value[0].hitsContainers[0].hits.map((hit: any) => ({
-        id: hit.resource.id,
-        name: hit.resource.name || 'Untitled',
-        webUrl: hit.resource.webUrl,
-        lastModifiedDateTime: hit.resource.lastModifiedDateTime,
-        size: hit.resource.size || 0,
-        type: hit.resource.folder ? 'folder' : 'file'
-      })));
+      const fileResults = fileSearchResponse.value[0].hitsContainers[0].hits
+        .map((hit: any) => ({
+          id: hit.resource.id,
+          name: hit.resource.name || 'Untitled',
+          webUrl: hit.resource.webUrl,
+          lastModifiedDateTime: hit.resource.lastModifiedDateTime,
+          size: hit.resource.size || 0,
+          type: hit.resource.folder ? 'folder' as const : 'file' as const,
+          createdBy: {
+            user: {
+              displayName: hit.resource.createdBy?.user?.displayName || hit.resource.createdBy?.email || 'Unknown'
+            }
+          },
+          lastModifiedBy: {
+            user: {
+              displayName: hit.resource.lastModifiedBy?.user?.displayName || hit.resource.lastModifiedBy?.email || 'Unknown'
+            }
+          },
+          siteId: hit.resource.parentReference?.siteId
+        }));
+
+      // If siteId is provided, only include results from that site
+      results.push(...(siteId 
+        ? fileResults.filter(result => result.siteId === siteId)
+        : fileResults));
     }
 
-    // Search for emails
-    try {
-      const emailResponse = await graphClient
-        .api('/me/messages')
-        .filter(`contains(subject,'${query}') or contains(bodyPreview,'${query}')`)
-        .select('id,subject,webLink,receivedDateTime,from,bodyPreview')
-        .top(25)
-        .get();
-
-      if (emailResponse?.value) {
-        results.push(...emailResponse.value.map((email: any) => ({
-          id: email.id,
-          name: email.subject || 'No Subject',
-          webUrl: email.webLink,
-          lastModifiedDateTime: email.receivedDateTime,
-          type: 'email',
-          preview: email.bodyPreview,
-          from: {
-            name: email.from?.emailAddress?.name,
-            email: email.from?.emailAddress?.address
-          }
-        })));
-      }
-    } catch (emailError) {
-      console.error('Error searching emails:', emailError);
-    }
-
-    // Search for Teams messages
-    try {
-      const teams = await graphClient
-        .api('/me/joinedTeams')
-        .get();
-
-      for (const team of teams.value || []) {
-        const channels = await graphClient
-          .api(`/teams/${team.id}/channels`)
+    // Only search for other content types if no content type filter is specified or if they're included in the filter
+    if (!contentTypes || contentTypes.includes('email')) {
+      try {
+        const emailResponse = await graphClient
+          .api('/me/messages')
+          .filter(`contains(subject,'${query}')`)
+          .select('id,subject,webLink,receivedDateTime,from,bodyPreview')
+          .top(25)
           .get();
 
-        for (const channel of channels.value || []) {
-          // Get all recent messages without filtering first
-          const messagesResponse = await graphClient
-            .api(`/teams/${team.id}/channels/${channel.id}/messages`)
-            .top(50)  // Increased to get more messages
-            .get();
-
-          if (messagesResponse?.value) {
-            const channelMessages = messagesResponse.value
-              .filter((msg: any) => {
-                if (msg.messageType !== 'message') return false;
-                
-                // Get the message content and clean it
-                const messageContent = msg.body?.content || '';
-                const cleanContent = messageContent
-                  .replace(/<[^>]*>/g, '')  // Remove HTML tags
-                  .replace(/&nbsp;/g, ' ')  // Convert HTML spaces
-                  .replace(/\s+/g, ' ')     // Normalize whitespace
-                  .trim()
-                  .toLowerCase();           // Case-insensitive comparison
-                
-                // Check if the cleaned content includes the query (case-insensitive)
-                return cleanContent.includes(query.toLowerCase());
-              })
-              .map((msg: any) => {
-                const messageContent = msg.body?.content || '';
-                const cleanContent = messageContent
-                  .replace(/<[^>]*>/g, '')
-                  .replace(/&nbsp;/g, ' ')
-                  .replace(/\s+/g, ' ')
-                  .trim();
-
-                return {
-                  id: msg.id,
-                  name: cleanContent.substring(0, 100) + (cleanContent.length > 100 ? '...' : ''),
-                  webUrl: msg.webUrl,
-                  lastModifiedDateTime: msg.lastModifiedDateTime || msg.createdDateTime,
-                  type: 'channel',
-                  preview: cleanContent,
-                  from: {
-                    name: msg.from?.user?.displayName || 'Unknown'
-                  },
-                  location: {
-                    team: team.displayName || 'Unknown Team',
-                    channel: channel.displayName || 'Unknown Channel'
-                  }
-                };
-              });
-
-            results.push(...channelMessages);
-          }
+        if (emailResponse?.value) {
+          const emailResults = emailResponse.value
+            .filter((email: any) => 
+              !query || 
+              email.bodyPreview?.toLowerCase().includes(query.toLowerCase())
+            )
+            .map((email: any) => ({
+              id: email.id,
+              name: email.subject || 'No Subject',
+              webUrl: email.webLink,
+              lastModifiedDateTime: email.receivedDateTime,
+              type: 'email' as const,
+              preview: email.bodyPreview,
+              from: {
+                name: email.from?.emailAddress?.name,
+                email: email.from?.emailAddress?.address
+              }
+            }));
+          results.push(...emailResults);
         }
+      } catch (emailError) {
+        console.error('Error searching emails:', emailError);
       }
-    } catch (teamsError) {
-      console.error('Error searching Teams messages:', teamsError);
     }
 
-    // Search for planner tasks
-    try {
-      const plannerResponse = await graphClient
-        .api('/me/planner/tasks')
-        .filter(`contains(title,'${query}')`)
-        .select('id,title,createdDateTime,planId,bucketId')
-        .top(25)
-        .get();
+    // Search for Teams messages if included in content types
+    if (!contentTypes || contentTypes.includes('chat') || contentTypes.includes('channel')) {
+      try {
+        const teams = await graphClient
+          .api('/me/joinedTeams')
+          .get();
 
-      if (plannerResponse?.value) {
-        results.push(...plannerResponse.value.map((task: any) => ({
-          id: task.id,
-          name: task.title || 'Untitled Task',
-          webUrl: `https://tasks.office.com/searchable.no/Home/Task/${task.id}`,
-          lastModifiedDateTime: task.createdDateTime,
-          type: 'planner'
-        })));
+        for (const team of teams.value || []) {
+          const channels = await graphClient
+            .api(`/teams/${team.id}/channels`)
+            .get();
+
+          for (const channel of channels.value || []) {
+            const messagesResponse = await graphClient
+              .api(`/teams/${team.id}/channels/${channel.id}/messages`)
+              .top(50)
+              .get();
+
+            if (messagesResponse?.value) {
+              const channelMessages = messagesResponse.value
+                .filter((msg: any) => {
+                  if (msg.messageType !== 'message') return false;
+                  
+                  const messageContent = msg.body?.content || '';
+                  const cleanContent = messageContent
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/&nbsp;/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+                  
+                  return cleanContent.includes(query.toLowerCase());
+                })
+                .map((msg: any) => {
+                  const messageContent = msg.body?.content || '';
+                  const cleanContent = messageContent
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/&nbsp;/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                  return {
+                    id: msg.id,
+                    name: cleanContent.substring(0, 100) + (cleanContent.length > 100 ? '...' : ''),
+                    webUrl: msg.webUrl,
+                    lastModifiedDateTime: msg.lastModifiedDateTime || msg.createdDateTime,
+                    type: 'channel' as const,
+                    preview: cleanContent,
+                    from: {
+                      name: msg.from?.user?.displayName || 'Unknown'
+                    },
+                    location: {
+                      team: team.displayName || 'Unknown Team',
+                      channel: channel.displayName || 'Unknown Channel'
+                    }
+                  };
+                });
+
+              results.push(...channelMessages);
+            }
+          }
+        }
+      } catch (teamsError) {
+        console.error('Error searching Teams messages:', teamsError);
       }
-    } catch (plannerError) {
-      console.error('Error searching planner tasks:', plannerError);
+    }
+
+    // Search for planner tasks if included in content types
+    if (!contentTypes || contentTypes.includes('planner')) {
+      try {
+        const plannerResponse = await graphClient
+          .api('/me/planner/tasks')
+          .filter(`contains(title,'${query}')`)
+          .select('id,title,createdDateTime,planId,bucketId,createdBy,details')
+          .top(25)
+          .get();
+
+        if (plannerResponse?.value) {
+          const tasksWithDetails = await Promise.all(
+            plannerResponse.value.map(async (task: any) => {
+              try {
+                const details = await graphClient
+                  .api(`/planner/tasks/${task.id}/details`)
+                  .get();
+                return { ...task, details };
+              } catch (error) {
+                console.error(`Error fetching details for task ${task.id}:`, error);
+                return task;
+              }
+            })
+          );
+
+          results.push(...tasksWithDetails.map((task: any) => {
+            const lastModifier = task.details?.lastModifiedBy?.user || task.createdBy;
+            
+            return {
+              id: task.id,
+              name: task.title || 'Untitled Task',
+              webUrl: `https://tasks.office.com/searchable.no/Home/Task/${task.id}`,
+              lastModifiedDateTime: task.details?.lastModifiedDateTime || task.createdDateTime,
+              type: 'planner' as const,
+              createdBy: {
+                user: {
+                  displayName: task.createdBy?.user?.displayName || 'Unknown',
+                  email: task.createdBy?.user?.email || task.createdBy?.user?.id || 'Unknown'
+                }
+              },
+              lastModifiedBy: {
+                user: {
+                  displayName: lastModifier?.displayName || 'Unknown',
+                  email: lastModifier?.email || lastModifier?.id || 'Unknown'
+                }
+              }
+            };
+          }));
+        }
+      } catch (plannerError) {
+        console.error('Error searching planner tasks:', plannerError);
+      }
     }
 
     // Sort all results by lastModifiedDateTime
@@ -1318,5 +1398,82 @@ export async function searchSharePointFiles(userId: string, query: string): Prom
   } catch (error) {
     console.error('Error searching Microsoft content:', error);
     throw error;
+  }
+}
+
+export async function markEmailAsRead(userId: string, emailId: string): Promise<boolean> {
+  try {
+    const accessToken = await getValidAccessToken(userId)
+    const graphClient = await getGraphClient(accessToken)
+
+    // Use PATCH instead of UPDATE and specify the content-type header
+    await graphClient
+      .api(`/me/messages/${emailId}`)
+      .header('Content-Type', 'application/json')
+      .patch({
+        isRead: true
+      })
+
+    return true
+  } catch (error: any) {
+    console.error('Error marking email as read:', {
+      message: error.message,
+      code: error.code,
+      statusCode: error.statusCode,
+      body: error.body
+    })
+    // Return false but don't throw, so the UI can still update
+    return false
+  }
+}
+
+export async function markTeamsChatMessageAsRead(userId: string, chatId: string, messageId: string): Promise<boolean> {
+  try {
+    const accessToken = await getValidAccessToken(userId)
+    const graphClient = await getGraphClient(accessToken)
+
+    await graphClient
+      .api(`/me/chats/${chatId}/messages/${messageId}/setReadStatus`)
+      .post({
+        isRead: true
+      })
+
+    return true
+  } catch (error: any) {
+    console.error('Error marking Teams chat message as read:', {
+      message: error.message,
+      code: error.code,
+      statusCode: error.statusCode,
+      body: error.body
+    })
+    return false
+  }
+}
+
+export async function markTeamsChannelMessageAsRead(
+  userId: string, 
+  teamId: string, 
+  channelId: string, 
+  messageId: string
+): Promise<boolean> {
+  try {
+    const accessToken = await getValidAccessToken(userId)
+    const graphClient = await getGraphClient(accessToken)
+
+    await graphClient
+      .api(`/teams/${teamId}/channels/${channelId}/messages/${messageId}/setReadStatus`)
+      .post({
+        isRead: true
+      })
+
+    return true
+  } catch (error: any) {
+    console.error('Error marking Teams channel message as read:', {
+      message: error.message,
+      code: error.code,
+      statusCode: error.statusCode,
+      body: error.body
+    })
+    return false
   }
 } 

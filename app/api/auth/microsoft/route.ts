@@ -8,7 +8,7 @@ const MICROSOFT_OAUTH_URL = 'https://login.microsoftonline.com/organizations/oau
 const SCOPE = [
   'Files.Read.All',           // For both SharePoint and OneDrive files
   'Sites.Read.All',           // For SharePoint site content
-  'Mail.Read',                // For Outlook emails
+  'Mail.ReadWrite',           // For Outlook emails (read and write)
   'User.Read',                // For basic user profile
   'Channel.ReadBasic.All',    // For Teams channel access
   'ChannelMessage.Read.All',  // For Teams channel messages
