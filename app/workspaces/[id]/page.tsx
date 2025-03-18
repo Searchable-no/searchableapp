@@ -2,27 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  DndContext,
-  DragOverlay,
-  closestCorners,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragStartEvent,
-  DragEndEvent,
-  UniqueIdentifier,
-} from "@dnd-kit/core";
-import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -41,13 +22,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronLeft, Plus, Trash2, Search } from "lucide-react";
+import {
+  ChevronLeft,
+  Plus,
+  Trash2,
+  Search,
+  File,
+  MessageSquare,
+  ListChecks,
+  X,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { useSession } from "@/lib/session";
 import { supabase } from "@/lib/supabase-browser";
 import { toast } from "sonner";
-import { ResourceDragItem } from "./resource-drag-item";
-import { ResourceBucket } from "./resource-bucket";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WorkspaceMembers } from "@/app/components/WorkspaceMembers";
 
 interface Workspace {
   id: string;
@@ -63,7 +54,6 @@ interface WorkspaceResource {
   resource_id: string;
   resource_name: string;
   resource_url?: string;
-  bucket?: string;
 }
 
 interface ResourceOption {
@@ -89,27 +79,18 @@ export default function WorkspaceDetailPage() {
   >([]);
   const [selectedResourceId, setSelectedResourceId] = useState("");
   const [isAddingResource, setIsAddingResource] = useState(false);
-  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
-
-  // For bucket management
-  const [buckets, setBuckets] = useState<string[]>([
-    "Ikke sortert",
-    "Viktig",
-    "Relevant",
-  ]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [newBucketName, setNewBucketName] = useState("");
-  const [addBucketDialogOpen, setAddBucketDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [selectedResourceToDelete, setSelectedResourceToDelete] = useState<
+    string | null
+  >(null);
+  const [deleteResourceDialogOpen, setDeleteResourceDialogOpen] =
+    useState(false);
+  const [activeTab, setActiveTab] = useState<string>("resources");
+  const [isSharedWorkspace, setIsSharedWorkspace] = useState(false);
+  const [ownerName, setOwnerName] = useState<string | null>(null);
 
   const workspaceId = params.id as string;
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
 
   useEffect(() => {
     if (!sessionLoading && session?.user) {
@@ -124,7 +105,6 @@ export default function WorkspaceDetailPage() {
         .from("workspaces")
         .select("*")
         .eq("id", workspaceId)
-        .eq("user_id", session?.user?.id)
         .single();
 
       if (workspaceError) throw workspaceError;
@@ -136,6 +116,13 @@ export default function WorkspaceDetailPage() {
 
       setWorkspace(workspaceData);
 
+      // Check if this is a shared workspace
+      if (workspaceData.user_id !== session?.user?.id) {
+        setIsSharedWorkspace(true);
+        // Without profile data, use a simplified owner name
+        setOwnerName("User " + workspaceData.user_id.substring(0, 8));
+      }
+
       // Fetch workspace resources
       const { data: resourcesData, error: resourcesError } = await supabase
         .from("workspace_resources")
@@ -144,19 +131,6 @@ export default function WorkspaceDetailPage() {
 
       if (resourcesError) throw resourcesError;
       setResources(resourcesData || []);
-
-      // Fetch buckets (in a real app, this would come from the database)
-      // For demo purposes, we're using hardcoded buckets with the addition of any
-      // unique buckets from existing resources
-      if (resourcesData) {
-        const existingBuckets = resourcesData
-          .map((r) => r.bucket)
-          .filter((b) => b && !buckets.includes(b)) as string[];
-
-        if (existingBuckets.length > 0) {
-          setBuckets([...buckets, ...existingBuckets]);
-        }
-      }
     } catch (error) {
       console.error("Error fetching workspace details:", error);
       toast.error("Kunne ikke hente arbeidsområdedetaljer");
@@ -232,7 +206,6 @@ export default function WorkspaceDetailPage() {
         resource_id: selectedResourceId,
         resource_name: selectedResource.name,
         resource_url: selectedResource.url,
-        bucket: "Ikke sortert", // Default bucket
       };
 
       const { data, error } = await supabase
@@ -251,74 +224,16 @@ export default function WorkspaceDetailPage() {
         toast.success("Ressurs lagt til i arbeidsområdet");
       }
     } catch (error) {
-      console.error("Error adding resource:", error);
-      toast.error("Kunne ikke legge til ressurs");
+      console.error("Error adding resource to workspace:", error);
+      toast.error("Kunne ikke legge til ressurs i arbeidsområdet");
     } finally {
       setIsAddingResource(false);
     }
   };
 
-  const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(event.active.id);
-  };
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    setActiveId(null);
-
-    if (over && active.id !== over.id) {
-      // If we're dragging to a bucket
-      if (typeof over.id === "string" && over.id.startsWith("bucket-")) {
-        const bucketName = over.id.replace("bucket-", "");
-        const resourceId = active.id.toString();
-
-        // Update the resource's bucket
-        const updatedResources = resources.map((resource) =>
-          resource.id === resourceId
-            ? { ...resource, bucket: bucketName }
-            : resource
-        );
-
-        setResources(updatedResources);
-
-        // Save to database
-        try {
-          const resource = updatedResources.find((r) => r.id === resourceId);
-          if (resource) {
-            const { error } = await supabase
-              .from("workspace_resources")
-              .update({ bucket: bucketName })
-              .eq("id", resourceId);
-
-            if (error) throw error;
-          }
-        } catch (error) {
-          console.error("Error updating resource bucket:", error);
-          toast.error("Kunne ikke oppdatere ressursgruppe");
-        }
-      }
-    }
-  };
-
-  const addNewBucket = () => {
-    if (!newBucketName.trim()) return;
-
-    if (buckets.includes(newBucketName.trim())) {
-      toast.error("En gruppe med dette navnet eksisterer allerede");
-      return;
-    }
-
-    setBuckets([...buckets, newBucketName.trim()]);
-    setNewBucketName("");
-    setAddBucketDialogOpen(false);
-    toast.success("Ny gruppe lagt til");
-  };
-
   const deleteWorkspace = async () => {
-    setIsSaving(true);
     try {
-      // First delete all associated resources
+      // Delete all resources associated with this workspace
       const { error: resourcesError } = await supabase
         .from("workspace_resources")
         .delete()
@@ -326,7 +241,7 @@ export default function WorkspaceDetailPage() {
 
       if (resourcesError) throw resourcesError;
 
-      // Then delete the workspace
+      // Delete the workspace
       const { error: workspaceError } = await supabase
         .from("workspaces")
         .delete()
@@ -334,14 +249,35 @@ export default function WorkspaceDetailPage() {
 
       if (workspaceError) throw workspaceError;
 
-      toast.success("Arbeidsområdet er slettet");
+      toast.success("Arbeidsområde slettet");
       router.push("/workspaces");
     } catch (error) {
       console.error("Error deleting workspace:", error);
       toast.error("Kunne ikke slette arbeidsområdet");
+    }
+  };
+
+  const deleteResource = async () => {
+    if (!selectedResourceToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from("workspace_resources")
+        .delete()
+        .eq("id", selectedResourceToDelete);
+
+      if (error) throw error;
+
+      setResources(resources.filter((r) => r.id !== selectedResourceToDelete));
+      toast.success("Ressurs fjernet fra arbeidsområdet");
+      setDeleteResourceDialogOpen(false);
+      setSelectedResourceToDelete(null);
+    } catch (error) {
+      console.error("Error deleting resource:", error);
+      toast.error("Kunne ikke fjerne ressursen");
     } finally {
-      setIsSaving(false);
-      setDeleteDialogOpen(false);
+      setIsDeleting(false);
     }
   };
 
@@ -352,281 +288,338 @@ export default function WorkspaceDetailPage() {
       )
     : resources;
 
+  // Get resource icon based on type
+  const getResourceIcon = (type: string) => {
+    switch (type) {
+      case "sharepoint":
+        return <File className="h-4 w-4" />;
+      case "teams":
+        return <MessageSquare className="h-4 w-4" />;
+      case "planner":
+        return <ListChecks className="h-4 w-4" />;
+      default:
+        return <File className="h-4 w-4" />;
+    }
+  };
+
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex items-center gap-2 mb-8">
-        <Button variant="outline" size="icon" asChild>
-          <Link href="/workspaces">
-            <ChevronLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <h1 className="text-3xl font-bold">
-          {workspace?.name || "Arbeidsområde"}
-        </h1>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Ressurser</CardTitle>
-            <CardDescription>
-              Totalt antall ressurser i dette arbeidsområdet
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold">{resources.length}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Grupper</CardTitle>
-            <CardDescription>
-              Antall ressursgrupper i arbeidsområdet
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold">{buckets.length}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Søkefilter</CardTitle>
-            <CardDescription>Bruk som filter i appens søk</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <Button asChild className="w-full">
-              <Link href={`/search/normal?workspace=${workspaceId}`}>
-                <Search className="h-4 w-4 mr-2" />
-                Søk med dette arbeidsområdet
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-semibold">Ressursgrupper</h2>
-        <div className="flex items-center gap-2">
-          <Dialog
-            open={addBucketDialogOpen}
-            onOpenChange={setAddBucketDialogOpen}
-          >
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <Plus className="h-4 w-4 mr-2" />
-                Legg til gruppe
+    <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="mb-8">
+        <Link
+          href="/workspaces"
+          className="flex items-center text-muted-foreground hover:text-foreground mb-4"
+        >
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          <span>Tilbake til arbeidsområder</span>
+        </Link>
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold">
+            {workspace?.name || "Laster..."}
+          </h1>
+          {workspace && workspace.user_id === session?.user?.id && (
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                onClick={() => setDeleteDialogOpen(true)}
+                className="px-3 gap-1"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>Slett arbeidsområde</span>
               </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Ny ressursgruppe</DialogTitle>
-                <DialogDescription>
-                  Opprett en ny gruppe for å organisere ressursene dine.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="bucketName">Gruppenavn</Label>
-                  <Input
-                    id="bucketName"
-                    placeholder="Skriv navn på gruppen"
-                    value={newBucketName}
-                    onChange={(e) => setNewBucketName(e.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setAddBucketDialogOpen(false)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {isSharedWorkspace && (
+        <div className="mb-6 p-4 border border-primary/20 bg-primary/5 rounded-lg flex items-center gap-3">
+          <Users className="h-5 w-5 text-primary" />
+          <div>
+            <p className="text-sm">
+              Dette arbeidsområdet er delt med deg av{" "}
+              <span className="font-medium">{ownerName}</span>.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <Tabs
+        defaultValue="resources"
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="space-y-6"
+      >
+        <TabsList>
+          <TabsTrigger value="resources" className="gap-2">
+            <File className="h-4 w-4" />
+            <span>Ressurser</span>
+          </TabsTrigger>
+          <TabsTrigger value="members" className="gap-2">
+            <Users className="h-4 w-4" />
+            <span>Medlemmer</span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="resources" className="space-y-6">
+          <div className="flex justify-between items-center mb-6">
+            <div className="relative w-full max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Søk etter ressurser..."
+                className="pl-10"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
-                  Avbryt
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <Dialog
+              open={addResourceDialogOpen}
+              onOpenChange={setAddResourceDialogOpen}
+            >
+              <DialogTrigger asChild>
+                <Button className="flex items-center gap-2">
+                  <Plus className="h-4 w-4" />
+                  <span>Legg til ressurs</span>
                 </Button>
-                <Button onClick={addNewBucket} disabled={!newBucketName.trim()}>
-                  Legg til
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog
-            open={addResourceDialogOpen}
-            onOpenChange={setAddResourceDialogOpen}
-          >
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Legg til ressurs
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Legg til ressurs</DialogTitle>
-                <DialogDescription>
-                  Velg en Microsoft 365-ressurs å legge til i dette
-                  arbeidsområdet.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="resourceType">Ressurstype</Label>
-                  <Select
-                    value={selectedResourceType}
-                    onValueChange={(
-                      value: "sharepoint" | "teams" | "planner"
-                    ) => handleResourceTypeChange(value)}
-                  >
-                    <SelectTrigger id="resourceType">
-                      <SelectValue placeholder="Velg ressurstype" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sharepoint">
-                        SharePoint-side
-                      </SelectItem>
-                      <SelectItem value="teams">Teams-kanal</SelectItem>
-                      <SelectItem value="planner">Planner-plan</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {selectedResourceType && (
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Legg til ressurs</DialogTitle>
+                  <DialogDescription>
+                    Velg en ressurs å legge til i dette arbeidsområdet.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <Label htmlFor="resource">Velg ressurs</Label>
+                    <Label htmlFor="resource-type">Ressurstype</Label>
                     <Select
-                      value={selectedResourceId}
-                      onValueChange={setSelectedResourceId}
-                      disabled={availableResources.length === 0}
+                      value={selectedResourceType}
+                      onValueChange={(
+                        value: "sharepoint" | "teams" | "planner"
+                      ) => handleResourceTypeChange(value)}
                     >
-                      <SelectTrigger id="resource">
-                        <SelectValue
-                          placeholder={
-                            availableResources.length === 0
-                              ? "Ingen tilgjengelige ressurser"
-                              : "Velg ressurs"
-                          }
-                        />
+                      <SelectTrigger id="resource-type">
+                        <SelectValue placeholder="Velg ressurstype" />
                       </SelectTrigger>
                       <SelectContent>
-                        {availableResources.map((resource) => (
-                          <SelectItem key={resource.id} value={resource.id}>
-                            {resource.name}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="sharepoint">
+                          SharePoint-sider
+                        </SelectItem>
+                        <SelectItem value="teams">Teams-kanaler</SelectItem>
+                        <SelectItem value="planner">Planner-planer</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {selectedResourceType && (
+                    <div className="space-y-2">
+                      <Label htmlFor="resource">
+                        {selectedResourceType === "sharepoint"
+                          ? "SharePoint-side"
+                          : selectedResourceType === "teams"
+                          ? "Teams-kanal"
+                          : "Planner-plan"}
+                      </Label>
+                      <Select
+                        value={selectedResourceId}
+                        onValueChange={setSelectedResourceId}
+                        disabled={availableResources.length === 0}
+                      >
+                        <SelectTrigger id="resource">
+                          <SelectValue
+                            placeholder={
+                              availableResources.length === 0
+                                ? "Ingen tilgjengelige ressurser"
+                                : "Velg ressurs"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableResources.map((resource) => (
+                            <SelectItem key={resource.id} value={resource.id}>
+                              {resource.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedResourceType("");
+                      setSelectedResourceId("");
+                      setAddResourceDialogOpen(false);
+                    }}
+                  >
+                    Avbryt
+                  </Button>
+                  <Button
+                    onClick={addResourceToWorkspace}
+                    disabled={
+                      !selectedResourceType ||
+                      !selectedResourceId ||
+                      isAddingResource
+                    }
+                  >
+                    {isAddingResource ? "Legger til..." : "Legg til"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          {filteredResources.length === 0 ? (
+            <Card className="shadow-sm border-dashed border-2 bg-muted/30">
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-4">
+                  <Plus className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-medium mb-2">
+                  {searchTerm
+                    ? "Ingen ressurser matcher søket ditt"
+                    : "Ingen ressurser lagt til ennå"}
+                </h3>
+                <p className="text-muted-foreground text-center max-w-md mb-6">
+                  {searchTerm
+                    ? "Prøv å søke etter noe annet, eller fjern søket for å se alle ressurser"
+                    : "Legg til SharePoint-sider, Teams-kanaler eller Planner-planer i dette arbeidsområdet for å gjøre dem søkbare sammen."}
+                </p>
+                {!searchTerm && (
+                  <Button
+                    onClick={() => setAddResourceDialogOpen(true)}
+                    variant="default"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Legg til første ressurs
+                  </Button>
                 )}
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setSelectedResourceType("");
-                    setSelectedResourceId("");
-                    setAddResourceDialogOpen(false);
-                  }}
+                {searchTerm && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setSearchTerm("")}
+                    className="mt-2"
+                  >
+                    <X className="h-4 w-4 mr-2" />
+                    Fjern søk
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {filteredResources.map((resource) => (
+                <Card
+                  key={resource.id}
+                  className="shadow-sm hover:shadow-md transition-shadow"
                 >
-                  Avbryt
-                </Button>
-                <Button
-                  onClick={addResourceToWorkspace}
-                  disabled={
-                    !selectedResourceType ||
-                    !selectedResourceId ||
-                    isAddingResource
-                  }
-                >
-                  {isAddingResource ? "Legger til..." : "Legg til"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
-
-      <div className="mb-6">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Søk etter ressurser..."
-            className="pl-10"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {buckets.map((bucket) => {
-            const bucketResources = filteredResources.filter(
-              (resource) => resource.bucket === bucket
-            );
-            return (
-              <ResourceBucket
-                key={bucket}
-                id={`bucket-${bucket}`}
-                title={bucket}
-                resources={bucketResources}
-              />
-            );
-          })}
-        </div>
-
-        <DragOverlay>
-          {activeId ? (
-            <div className="opacity-80">
-              {resources.find((r) => r.id === activeId) && (
-                <ResourceDragItem
-                  resource={resources.find((r) => r.id === activeId)!}
-                  isDragging
-                />
-              )}
+                  <CardContent className="p-4 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-primary/10 p-2.5 rounded-md text-primary">
+                        {getResourceIcon(resource.resource_type)}
+                      </div>
+                      <div>
+                        <h3 className="font-medium">
+                          {resource.resource_name}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          {resource.resource_type === "sharepoint" &&
+                            "SharePoint-side"}
+                          {resource.resource_type === "teams" && "Teams-kanal"}
+                          {resource.resource_type === "planner" &&
+                            "Planner-plan"}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        setSelectedResourceToDelete(resource.id);
+                        setDeleteResourceDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+          )}
+        </TabsContent>
 
-      <div className="mt-8 border-t pt-6">
-        <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-          <Trash2 className="h-4 w-4 mr-2" />
-          Slett arbeidsområde
-        </Button>
+        <TabsContent value="members">
+          <WorkspaceMembers workspaceId={workspaceId} />
+        </TabsContent>
+      </Tabs>
 
-        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Slett arbeidsområde</DialogTitle>
-              <DialogDescription>
-                Er du sikker på at du vil slette dette arbeidsområdet? Denne
-                handlingen kan ikke angres.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setDeleteDialogOpen(false)}
-              >
-                Avbryt
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={deleteWorkspace}
-                disabled={isSaving}
-              >
-                {isSaving ? "Sletter..." : "Slett"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Slett arbeidsområde</DialogTitle>
+            <DialogDescription>
+              Er du sikker på at du vil slette dette arbeidsområdet? Dette vil
+              fjerne alle ressurser fra arbeidsområdet, men ikke selve
+              ressursene.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(false)}
+            >
+              Avbryt
+            </Button>
+            <Button variant="destructive" onClick={deleteWorkspace}>
+              Slett arbeidsområde
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteResourceDialogOpen}
+        onOpenChange={setDeleteResourceDialogOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Fjern ressurs</DialogTitle>
+            <DialogDescription>
+              Er du sikker på at du vil fjerne denne ressursen fra
+              arbeidsområdet? Dette vil bare fjerne ressursen fra
+              arbeidsområdet, ikke selve ressursen.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteResourceDialogOpen(false);
+                setSelectedResourceToDelete(null);
+              }}
+            >
+              Avbryt
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={deleteResource}
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Fjerner..." : "Fjern ressurs"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

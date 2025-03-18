@@ -1,6 +1,9 @@
 'use server'
 
 import { supabaseAdmin } from './supabase-admin'
+import { createClient } from '@supabase/supabase-js';
+import { cookies } from 'next/headers';
+import { Database } from '@/types/supabase';
 
 export async function getValidAccessToken(userId: string) {
   const { data: connection, error } = await supabaseAdmin
@@ -63,4 +66,28 @@ async function refreshAccessToken(refreshToken: string) {
     refreshToken: data.refresh_token,
     expiresAt: new Date(Date.now() + data.expires_in * 1000).toISOString(),
   };
-} 
+}
+
+export const createServerClient = (cookieStore: ReturnType<typeof cookies>) => {
+  return createClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        persistSession: false,
+        detectSessionInUrl: false,
+      },
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: any) {
+          cookieStore.set({ name, value: '', ...options });
+        },
+      },
+    }
+  );
+}; 
