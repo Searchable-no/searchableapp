@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -8,185 +8,218 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogFooter,
-} from '@/components/ui/dialog'
-import { Settings, GripVertical, Sun, Moon, Monitor } from 'lucide-react'
-import { TileType } from '@/lib/database.types'
-import { supabase } from '@/lib/supabase-browser'
-import { toast } from 'sonner'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Card, CardContent, CardDescription } from '@/components/ui/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { DragDropContext, Draggable, Droppable, DroppableProvided, DraggableProvided } from '@hello-pangea/dnd'
-import { cn } from '@/lib/utils'
+} from "@/components/ui/dialog";
+import { Settings, GripVertical, Sun, Moon, Monitor } from "lucide-react";
+import { TileType } from "@/lib/database.types";
+import { supabase } from "@/lib/supabase-browser";
+import { toast } from "sonner";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardDescription } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DragDropContext,
+  Draggable,
+  Droppable,
+  DroppableProvided,
+  DraggableProvided,
+} from "@hello-pangea/dnd";
+import { cn } from "@/lib/utils";
 
 const tileNames: Record<TileType, string> = {
-  email: 'Email Messages',
-  teams_message: 'Teams Messages',
-  teams_channel: 'Teams Channel Messages',
-  calendar: 'Calendar Events',
-  files: 'Recent Files',
-  planner: 'Planner Tasks'
-}
+  email: "Email Messages",
+  teams_message: "Teams Messages",
+  teams_channel: "Teams Channel Messages",
+  calendar: "Calendar Events",
+  files: "Recent Files",
+  planner: "Planner Tasks",
+};
 
 const tileIcons: Record<TileType, React.ReactNode> = {
-  email: '📧',
-  teams_message: '💬',
-  teams_channel: '👥',
-  calendar: '📅',
-  files: '📁',
-  planner: '📋'
-}
+  email: "📧",
+  teams_message: "💬",
+  teams_channel: "👥",
+  calendar: "📅",
+  files: "📁",
+  planner: "📋",
+};
 
-const defaultTiles: TileType[] = ['email', 'teams_message', 'teams_channel', 'calendar', 'files', 'planner']
-const defaultOrder = [0, 1, 2, 3, 4, 5]
+const defaultTiles: TileType[] = [
+  "email",
+  "teams_message",
+  "teams_channel",
+  "calendar",
+  "files",
+  "planner",
+];
+const defaultOrder = [0, 1, 2, 3, 4, 5];
 
 interface TilePreferences {
-  size: 'compact' | 'normal' | 'large'
-  refreshInterval: number // in seconds
+  size: "compact" | "normal" | "large";
+  refreshInterval: number; // in seconds
 }
 
 interface DashboardPreferences {
-  enabledTiles: TileType[]
-  tileOrder: number[]
-  tilePreferences: Record<TileType, TilePreferences>
-  theme: 'light' | 'dark' | 'system'
+  enabledTiles: TileType[];
+  tileOrder: number[];
+  tilePreferences: Record<TileType, TilePreferences>;
+  theme: "light" | "dark" | "system";
 }
 
 interface DashboardPreferencesProps {
-  userId: string
-  onPreferencesChange: (preferences: DashboardPreferences) => void
-  initialPreferences?: DashboardPreferences
+  userId: string;
+  onPreferencesChange: (preferences: DashboardPreferences) => void;
+  initialPreferences?: DashboardPreferences;
 }
 
 const defaultTilePreferences: TilePreferences = {
-  size: 'normal',
-  refreshInterval: 300 // 5 minutes
-}
+  size: "normal",
+  refreshInterval: 300, // 5 minutes
+};
 
 const defaultPreferences: DashboardPreferences = {
   enabledTiles: defaultTiles,
   tileOrder: defaultOrder,
   tilePreferences: Object.fromEntries(
-    defaultTiles.map(tile => [tile, defaultTilePreferences])
+    defaultTiles.map((tile) => [tile, defaultTilePreferences])
   ) as Record<TileType, TilePreferences>,
-  theme: 'system'
-}
+  theme: "system",
+};
 
-export function DashboardPreferences({ 
-  userId, 
+export function DashboardPreferences({
+  userId,
   onPreferencesChange,
-  initialPreferences = defaultPreferences
+  initialPreferences = defaultPreferences,
 }: DashboardPreferencesProps) {
-  const [open, setOpen] = useState(false)
-  const [preferences, setPreferences] = useState<DashboardPreferences>(initialPreferences)
-  const [saving, setSaving] = useState(false)
-  const allTiles: TileType[] = ['email', 'teams_message', 'teams_channel', 'calendar', 'files', 'planner']
+  const [open, setOpen] = useState(false);
+  const [preferences, setPreferences] =
+    useState<DashboardPreferences>(initialPreferences);
+  const [saving, setSaving] = useState(false);
+  const allTiles: TileType[] = [
+    "email",
+    "teams_message",
+    "teams_channel",
+    "calendar",
+    "files",
+    "planner",
+  ];
 
   useEffect(() => {
-    setPreferences(initialPreferences)
-  }, [initialPreferences])
+    setPreferences(initialPreferences);
+  }, [initialPreferences]);
 
   const savePreferences = async () => {
-    if (saving) return
-    setSaving(true)
+    if (saving) return;
+    setSaving(true);
 
     try {
       // First try to update only the basic fields that we know exist
       const { error: basicError } = await supabase
-        .from('dashboard_preferences')
+        .from("dashboard_preferences")
         .upsert({
           user_id: userId,
           enabled_tiles: preferences.enabledTiles,
           tile_order: preferences.tileOrder,
-          updated_at: new Date().toISOString()
-        })
+          updated_at: new Date().toISOString(),
+        });
 
       if (basicError) {
-        console.error('Error saving basic preferences:', basicError)
-        toast.error(`Failed to save preferences: ${basicError.message}`)
-        return
+        console.error("Error saving basic preferences:", basicError);
+        toast.error(`Failed to save preferences: ${basicError.message}`);
+        return;
       }
 
       // Try to update the new fields, but ignore any errors if the columns don't exist yet
       try {
         await supabase
-          .from('dashboard_preferences')
+          .from("dashboard_preferences")
           .update({
             tile_preferences: preferences.tilePreferences,
             theme: preferences.theme,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
           })
-          .eq('user_id', userId)
+          .eq("user_id", userId);
       } catch (err) {
         // Ignore errors from missing columns
-        console.log('New columns not available yet:', err)
+        console.log("New columns not available yet:", err);
       }
 
-      onPreferencesChange(preferences)
-      toast.success('Dashboard preferences saved')
-      setOpen(false)
+      onPreferencesChange(preferences);
+      toast.success("Dashboard preferences saved");
+      setOpen(false);
     } catch (err) {
-      console.error('Unexpected error saving preferences:', err)
-      toast.error('Failed to save preferences')
+      console.error("Unexpected error saving preferences:", err);
+      toast.error("Failed to save preferences");
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   const toggleTile = (tile: TileType) => {
-    setPreferences(prev => {
+    setPreferences((prev) => {
       if (prev.enabledTiles.includes(tile)) {
         // Remove tile
-        const newEnabledTiles = prev.enabledTiles.filter(t => t !== tile)
-        const newTileOrder = prev.tileOrder.filter((_, index) => index < newEnabledTiles.length)
+        const newEnabledTiles = prev.enabledTiles.filter((t) => t !== tile);
+        const newTileOrder = prev.tileOrder.filter(
+          (_, index) => index < newEnabledTiles.length
+        );
         return {
           ...prev,
           enabledTiles: newEnabledTiles,
-          tileOrder: newTileOrder
-        }
+          tileOrder: newTileOrder,
+        };
       } else {
         // Add tile
-        const newEnabledTiles = [...prev.enabledTiles, tile]
-        const newTileOrder = [...prev.tileOrder, prev.tileOrder.length]
+        const newEnabledTiles = [...prev.enabledTiles, tile];
+        const newTileOrder = [...prev.tileOrder, prev.tileOrder.length];
         return {
           ...prev,
           enabledTiles: newEnabledTiles,
-          tileOrder: newTileOrder
-        }
+          tileOrder: newTileOrder,
+        };
       }
-    })
-  }
+    });
+  };
 
   const handleDragEnd = (result: any) => {
-    if (!result.destination) return
+    if (!result.destination) return;
 
-    const items = Array.from(preferences.enabledTiles)
-    const [reorderedItem] = items.splice(result.source.index, 1)
-    items.splice(result.destination.index, 0, reorderedItem)
+    const items = Array.from(preferences.enabledTiles);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
 
-    const newOrder = items.map((_, index) => index)
+    const newOrder = items.map((_, index) => index);
 
-    setPreferences(prev => ({
+    setPreferences((prev) => ({
       ...prev,
       enabledTiles: items,
-      tileOrder: newOrder
-    }))
-  }
+      tileOrder: newOrder,
+    }));
+  };
 
-  const updateTilePreference = (tile: TileType, key: keyof TilePreferences, value: any) => {
-    setPreferences(prev => ({
+  const updateTilePreference = (
+    tile: TileType,
+    key: keyof TilePreferences,
+    value: any
+  ) => {
+    setPreferences((prev) => ({
       ...prev,
       tilePreferences: {
         ...prev.tilePreferences,
         [tile]: {
           ...prev.tilePreferences[tile],
-          [key]: value
-        }
-      }
-    }))
-  }
+          [key]: value,
+        },
+      },
+    }));
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -225,7 +258,11 @@ export function DashboardPreferences({
                         className="space-y-2"
                       >
                         {preferences.enabledTiles.map((tile, index) => (
-                          <Draggable key={tile} draggableId={tile} index={index}>
+                          <Draggable
+                            key={tile}
+                            draggableId={tile}
+                            index={index}
+                          >
                             {(provided: DraggableProvided) => (
                               <div
                                 ref={provided.innerRef}
@@ -236,14 +273,18 @@ export function DashboardPreferences({
                                   <div {...provided.dragHandleProps}>
                                     <GripVertical className="h-5 w-5 text-muted-foreground" />
                                   </div>
-                                  <span className="text-lg mr-2">{tileIcons[tile]}</span>
+                                  <span className="text-lg mr-2">
+                                    {tileIcons[tile]}
+                                  </span>
                                   <Label htmlFor={tile} className="font-medium">
                                     {tileNames[tile]}
                                   </Label>
                                 </div>
                                 <Switch
                                   id={tile}
-                                  checked={preferences.enabledTiles.includes(tile)}
+                                  checked={preferences.enabledTiles.includes(
+                                    tile
+                                  )}
                                   onCheckedChange={() => toggleTile(tile)}
                                 />
                               </div>
@@ -268,8 +309,13 @@ export function DashboardPreferences({
                     <div className="flex items-center justify-between">
                       <Select
                         value={preferences.theme}
-                        onValueChange={(value: 'light' | 'dark' | 'system') => 
-                          setPreferences(prev => ({ ...prev, theme: value }))}
+                        onValueChange={(value: "light" | "dark" | "system") => {
+                          setPreferences((prev) => ({ ...prev, theme: value }));
+                          // Also update localStorage for consistency with sidebar toggle
+                          if (typeof window !== "undefined") {
+                            localStorage.setItem("theme", value);
+                          }
+                        }}
                       >
                         <SelectTrigger className="w-full">
                           <SelectValue />
@@ -316,8 +362,9 @@ export function DashboardPreferences({
                         <Label>Size</Label>
                         <Select
                           value={preferences.tilePreferences[tile].size}
-                          onValueChange={(value: 'compact' | 'normal' | 'large') => 
-                            updateTilePreference(tile, 'size', value)}
+                          onValueChange={(
+                            value: "compact" | "normal" | "large"
+                          ) => updateTilePreference(tile, "size", value)}
                         >
                           <SelectTrigger>
                             <SelectValue />
@@ -332,9 +379,16 @@ export function DashboardPreferences({
                       <div className="space-y-2">
                         <Label>Refresh Interval</Label>
                         <Select
-                          value={preferences.tilePreferences[tile].refreshInterval.toString()}
-                          onValueChange={(value) => 
-                            updateTilePreference(tile, 'refreshInterval', parseInt(value))}
+                          value={preferences.tilePreferences[
+                            tile
+                          ].refreshInterval.toString()}
+                          onValueChange={(value) =>
+                            updateTilePreference(
+                              tile,
+                              "refreshInterval",
+                              parseInt(value)
+                            )
+                          }
                         >
                           <SelectTrigger>
                             <SelectValue />
@@ -357,24 +411,21 @@ export function DashboardPreferences({
         </Tabs>
 
         <DialogFooter>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => {
-              setPreferences(initialPreferences)
-              setOpen(false)
+              setPreferences(initialPreferences);
+              setOpen(false);
             }}
             disabled={saving}
           >
             Cancel
           </Button>
-          <Button 
-            onClick={savePreferences}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : 'Save Changes'}
+          <Button onClick={savePreferences} disabled={saving}>
+            {saving ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-} 
+  );
+}

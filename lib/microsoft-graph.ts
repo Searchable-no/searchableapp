@@ -90,25 +90,15 @@ export interface CalendarEvent {
 export interface PlannerTask {
   id: string
   title: string
-  planId: string
-  planTitle: string
-  bucketId: string
-  priority: number
-  percentComplete: number
-  dueDateTime?: string
-  webUrl: string
+  dueDateTime: string | null
   createdDateTime: string
-  description?: string
-  assignments: {
-    [key: string]: {
-      assignedBy: {
-        user: {
-          displayName: string
-          id: string
-        }
-      }
-    }
-  }
+  assignedUserIds: string[]
+  planId: string
+  planTitle?: string
+  bucketId: string
+  bucketName?: string
+  type: 'planner'
+  webUrl?: string
 }
 
 export interface Team {
@@ -1475,5 +1465,98 @@ export async function markTeamsChannelMessageAsRead(
       body: error.body
     })
     return false
+  }
+}
+
+export async function searchPlannerTasks(
+  userId: string,
+  query: string
+): Promise<PlannerTask[]> {
+  try {
+    const accessToken = await getValidAccessToken(userId);
+    const graphClient = await getGraphClient(accessToken);
+    
+    // First, let's get all the plans the user has access to
+    // We'll need to get groups the user is a member of
+    const groupsResponse = await graphClient
+      .api('/me/memberOf')
+      .select('id,displayName')
+      .get();
+      
+    const groups = groupsResponse.value.filter((group: any) => 
+      group['@odata.type'] === '#microsoft.graph.group'
+    );
+    
+    const results: PlannerTask[] = [];
+    
+    // For each group, get the associated plans and tasks
+    for (const group of groups) {
+      try {
+        // Get plans for this group
+        const plansResponse = await graphClient
+          .api(`/groups/${group.id}/planner/plans`)
+          .select('id,title')
+          .get();
+        
+        // For each plan, get tasks and filter by query
+        for (const plan of plansResponse.value) {
+          try {
+            // Get tasks for this plan
+            const tasksResponse = await graphClient
+              .api(`/planner/plans/${plan.id}/tasks`)
+              .get();
+            
+            // Get buckets for this plan for better task context
+            const bucketsResponse = await graphClient
+              .api(`/planner/plans/${plan.id}/buckets`)
+              .get();
+            
+            // Create a map of bucket IDs to names for easier lookup
+            const bucketMap = {};
+            for (const bucket of bucketsResponse.value) {
+              bucketMap[bucket.id] = bucket.name;
+            }
+            
+            // Filter and map tasks
+            const filteredTasks = tasksResponse.value
+              // Only include tasks that match the query
+              .filter((task: any) => {
+                const title = task.title?.toLowerCase() || '';
+                const description = task.description?.toLowerCase() || '';
+                const query_lower = query.toLowerCase();
+                
+                return title.includes(query_lower) || description.includes(query_lower);
+              })
+              // Map to our PlannerTask interface
+              .map((task: any) => ({
+                id: task.id,
+                title: task.title,
+                dueDateTime: task.dueDateTime,
+                createdDateTime: task.createdDateTime,
+                assignedUserIds: task.assignments ? Object.keys(task.assignments) : [],
+                planId: plan.id,
+                planTitle: plan.title,
+                bucketId: task.bucketId,
+                bucketName: bucketMap[task.bucketId] || 'Unknown',
+                type: 'planner' as const,
+                webUrl: `https://tasks.office.com/Home/Task/${task.id}`
+              }));
+            
+            results.push(...filteredTasks);
+          } catch (error) {
+            // Continue with other plans if one has an issue
+            console.error(`Error getting tasks for plan ${plan.id}:`, error);
+          }
+        }
+      } catch (error) {
+        // Continue with other groups if one has an issue
+        console.error(`Error getting planner plans for group ${group.id}:`, error);
+      }
+    }
+    
+    return results;
+  } catch (error) {
+    console.error('Error searching Planner tasks:', error);
+    throw error;
   }
 } 

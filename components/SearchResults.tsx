@@ -33,7 +33,9 @@ import {
   FileCode,
   FileImage,
   Archive,
+  Calendar,
 } from "lucide-react";
+import { PlannerTask } from "@/lib/microsoft-graph";
 
 // Helper function to determine source based on type and path
 function getSource(result: SharePointSearchResult): string {
@@ -50,19 +52,18 @@ function getSource(result: SharePointSearchResult): string {
         if (result.path.toLowerCase().includes("/onedrive/")) return "OneDrive";
         if (result.path.toLowerCase().includes("/sharepoint/"))
           return "SharePoint";
-        if (result.path.toLowerCase().includes("/sites/")) return "SharePoint";
-        if (result.path.toLowerCase().includes("/personal/")) return "OneDrive";
       }
-      // Check webUrl for source hints
-      if (result.webUrl) {
-        if (result.webUrl.toLowerCase().includes("-my.sharepoint.com"))
-          return "OneDrive";
-        if (result.webUrl.toLowerCase().includes(".sharepoint.com"))
-          return "SharePoint";
-      }
-      return "SharePoint"; // Default to SharePoint if no other source is determined
+      return "SharePoint";
+    case "EMAIL":
+      return "Outlook";
+    case "CHAT":
+      return "Microsoft Teams Chat";
+    case "CHANNEL":
+      return "Microsoft Teams Channel";
+    case "EVENT":
+      return "Calendar";
     default:
-      return "Unknown";
+      return "Microsoft 365";
   }
 }
 
@@ -110,55 +111,107 @@ export interface SharePointSearchResult {
   lastModifiedDateTime: string;
 }
 
+// Define a union type for all search results
+export type CombinedSearchResult = SharePointSearchResult | PlannerTask;
+
 interface SearchResultsProps {
-  results: SharePointSearchResult[];
+  results: CombinedSearchResult[];
   isLoading: boolean;
   error: string | null;
 }
 
-// Helper function to get the appropriate icon for each content type
-function getResultIcon(result: SharePointSearchResult) {
-  // First check the type
-  switch (result.type.toLowerCase()) {
-    case "email":
-      return <Mail className="h-4 w-4 text-sky-400" />;
-    case "chat":
-      return <MessageSquare className="h-4 w-4 text-indigo-400" />;
-    case "channel":
-      return <MessageCircle className="h-4 w-4 text-indigo-400" />;
-    case "planner":
-      return <ListTodo className="h-4 w-4 text-rose-400" />;
-    case "folder":
-      return <Folder className="h-4 w-4 text-amber-400" />;
+// This function needs to handle both SharePointSearchResult and PlannerTask types
+function getResultIcon(result: CombinedSearchResult) {
+  // Handle Planner tasks
+  if (result.type === "planner") {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-rose-50 text-rose-500 rounded-lg">
+        <ListTodo size={20} />
+      </div>
+    );
+  }
+
+  // For all other types, use the existing logic
+  const type = result.type.toLowerCase();
+
+  if (type === "email") {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-sky-50 text-sky-500 rounded-lg">
+        <Mail size={20} />
+      </div>
+    );
+  }
+
+  if (type === "chat" || type === "chatmessage") {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-indigo-50 text-indigo-500 rounded-lg">
+        <MessageSquare size={20} />
+      </div>
+    );
+  }
+
+  if (type === "channel" || type === "channelmessage") {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-violet-50 text-violet-500 rounded-lg">
+        <MessageCircle size={20} />
+      </div>
+    );
+  }
+
+  if (type === "event") {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-emerald-50 text-emerald-500 rounded-lg">
+        <Calendar size={20} />
+      </div>
+    );
+  }
+
+  // File types
+  if (type === "folder") {
+    return (
+      <div className="w-10 h-10 flex items-center justify-center bg-amber-50 text-amber-500 rounded-lg">
+        <Folder size={20} />
+      </div>
+    );
+  }
+
+  // For files, check the extension
+  const name = (result as SharePointSearchResult).name.toLowerCase();
+  const extension = name.split(".").pop();
+
+  switch (extension) {
+    case "docx":
+    case "doc":
+      return (
+        <div className="w-10 h-10 flex items-center justify-center bg-blue-50 text-blue-500 rounded-lg">
+          <FileText size={20} />
+        </div>
+      );
+    case "xlsx":
+    case "xls":
+      return <FileSpreadsheet className="h-4 w-4 text-emerald-400" />;
+    case "pptx":
+    case "ppt":
+      return <Presentation className="h-4 w-4 text-orange-400" />;
+    case "pdf":
+      return <File className="h-4 w-4 text-red-400" />;
+    case "txt":
+      return <FileCode className="h-4 w-4 text-slate-400" />;
+    case "jpg":
+    case "jpeg":
+    case "png":
+    case "gif":
+      return <FileImage className="h-4 w-4 text-violet-400" />;
+    case "zip":
+    case "rar":
+    case "7z":
+      return <Archive className="h-4 w-4 text-amber-400" />;
     default:
-      // For files, check the extension
-      const extension = result.name.split(".").pop()?.toLowerCase();
-      switch (extension) {
-        case "docx":
-        case "doc":
-          return <FileText className="h-4 w-4 text-blue-400" />;
-        case "xlsx":
-        case "xls":
-          return <FileSpreadsheet className="h-4 w-4 text-emerald-400" />;
-        case "pptx":
-        case "ppt":
-          return <Presentation className="h-4 w-4 text-orange-400" />;
-        case "pdf":
-          return <File className="h-4 w-4 text-red-400" />;
-        case "txt":
-          return <FileCode className="h-4 w-4 text-slate-400" />;
-        case "jpg":
-        case "jpeg":
-        case "png":
-        case "gif":
-          return <FileImage className="h-4 w-4 text-violet-400" />;
-        case "zip":
-        case "rar":
-        case "7z":
-          return <Archive className="h-4 w-4 text-amber-400" />;
-        default:
-          return <File className="h-4 w-4 text-slate-400" />;
-      }
+      return (
+        <div className="w-10 h-10 flex items-center justify-center bg-slate-50 text-slate-500 rounded-lg">
+          <File size={20} />
+        </div>
+      );
   }
 }
 
@@ -196,34 +249,43 @@ export function SearchResults({
     return pages;
   };
 
-  const handleFileSelect = async (file: SharePointSearchResult) => {
-    setSelectedFile(file);
+  const handleFileSelect = async (result: CombinedSearchResult) => {
+    // Handle Planner tasks differently - just open the URL
+    if (result.type === "planner") {
+      if (result.webUrl) {
+        window.open(result.webUrl, "_blank");
+      }
+      return;
+    }
+
+    // Handle SharePoint files as before
+    setSelectedFile(result as SharePointSearchResult);
     try {
       // Determine the driveId
-      let driveId = file.driveId;
+      let driveId = result.driveId;
 
       // If no driveId is provided directly, try to extract it from the file ID
-      if (!driveId && file.id) {
-        if (file.id.includes("!")) {
-          [driveId] = file.id.split("!");
-        } else if (file.id.includes(",")) {
-          [driveId] = file.id.split(",");
+      if (!driveId && result.id) {
+        if (result.id.includes("!")) {
+          [driveId] = result.id.split("!");
+        } else if (result.id.includes(",")) {
+          [driveId] = result.id.split(",");
         }
       }
 
       // If we still don't have a driveId and it's a SharePoint file, use the default Documents library ID
-      if (!driveId && file.webUrl?.includes("sharepoint.com")) {
+      if (!driveId && result.webUrl?.includes("sharepoint.com")) {
         driveId = "b!6ouVabiacEOJOIH3ZtBNuQxkdvT6fHlLgWYCa3Nzj0o";
       }
 
-      if (!driveId || !file.id) {
-        console.error("No driveId or fileId available for file:", file);
+      if (!driveId || !result.id) {
+        console.error("No driveId or fileId available for file:", result);
         return;
       }
 
       const response = await fetch(
         `/api/preview?fileId=${encodeURIComponent(
-          file.id
+          result.id
         )}&driveId=${encodeURIComponent(driveId)}`
       );
 
@@ -240,8 +302,8 @@ export function SearchResults({
     } catch (error) {
       console.error("Failed to get preview URL:", error);
       // Fallback to webUrl if preview fails
-      if (file.webUrl) {
-        setPreviewUrl(file.webUrl);
+      if (result.webUrl) {
+        setPreviewUrl(result.webUrl);
       }
     }
   };
@@ -306,7 +368,9 @@ export function SearchResults({
               <div className="truncate">
                 {result.lastModifiedBy?.user?.displayName || "System"}
               </div>
-              <div className="truncate">{getSource(result)}</div>
+              <div className="truncate">
+                {getSource(result as SharePointSearchResult)}
+              </div>
             </div>
           ))}
         </div>
@@ -425,7 +489,8 @@ export function SearchResults({
                     <div>
                       <dt className="text-muted-foreground">Source</dt>
                       <dd className="font-medium">
-                        {selectedFile && getSource(selectedFile)}
+                        {selectedFile &&
+                          getSource(selectedFile as SharePointSearchResult)}
                       </dd>
                     </div>
                     <div>

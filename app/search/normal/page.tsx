@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSession } from "@/lib/session";
+import { supabase } from "@/lib/supabase-browser";
 import {
   SearchResults,
   SharePointSearchResult,
@@ -171,6 +173,9 @@ const lastModifiedOptions = [
 ] as const;
 
 export default function NormalSearchPage() {
+  const searchParams = useSearchParams();
+  const workspaceId = searchParams.get("workspace");
+
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SharePointSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -182,6 +187,7 @@ export default function NormalSearchPage() {
   const [lastModified, setLastModified] = useState<string>("all");
   const [creators, setCreators] = useState<Set<string>>(new Set());
   const [selectedCreator, setSelectedCreator] = useState<string>("all");
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
 
   // Extract unique creators from results
   useEffect(() => {
@@ -193,6 +199,30 @@ export default function NormalSearchPage() {
     });
     setCreators(uniqueCreators);
   }, [results]);
+
+  // Fetch workspace name if workspaceId is provided
+  useEffect(() => {
+    if (workspaceId && session?.user?.id) {
+      const fetchWorkspaceName = async () => {
+        try {
+          const { data } = await supabase
+            .from("workspaces")
+            .select("name")
+            .eq("id", workspaceId)
+            .eq("user_id", session.user.id)
+            .single();
+
+          if (data) {
+            setWorkspaceName(data.name);
+          }
+        } catch (error) {
+          console.error("Error fetching workspace name:", error);
+        }
+      };
+
+      fetchWorkspaceName();
+    }
+  }, [workspaceId, session?.user?.id]);
 
   // Fetch SharePoint sites when component mounts
   useEffect(() => {
@@ -301,26 +331,48 @@ export default function NormalSearchPage() {
     setError(null);
 
     try {
-      const response = await fetch(
-        `/api/search/normal?q=${encodeURIComponent(
-          query
-        )}&userId=${encodeURIComponent(session.user.id)}${
-          selectedSiteId !== "all"
-            ? `&siteId=${encodeURIComponent(selectedSiteId)}`
-            : ""
-        }${
-          selectedFileTypes.length > 0
-            ? `&contentTypes=${encodeURIComponent(selectedFileTypes.join(","))}`
-            : ""
-        }`
-      );
+      // If we have a workspace ID, use the workspace search endpoint
+      if (workspaceId) {
+        const response = await fetch(
+          `/api/search/with-workspace?query=${encodeURIComponent(
+            query
+          )}&workspace=${encodeURIComponent(workspaceId)}`
+        );
 
-      if (!response.ok) {
-        throw new Error("Search failed");
+        if (!response.ok) {
+          throw new Error("Search failed");
+        }
+
+        const data = await response.json();
+        setResults(data.data);
+        if (data.workspace) {
+          setWorkspaceName(data.workspace);
+        }
+      } else {
+        // Use the regular search endpoint
+        const response = await fetch(
+          `/api/search/normal?q=${encodeURIComponent(
+            query
+          )}&userId=${encodeURIComponent(session.user.id)}${
+            selectedSiteId !== "all"
+              ? `&siteId=${encodeURIComponent(selectedSiteId)}`
+              : ""
+          }${
+            selectedFileTypes.length > 0
+              ? `&contentTypes=${encodeURIComponent(
+                  selectedFileTypes.join(",")
+                )}`
+              : ""
+          }`
+        );
+
+        if (!response.ok) {
+          throw new Error("Search failed");
+        }
+
+        const data = await response.json();
+        setResults(data.results);
       }
-
-      const data = await response.json();
-      setResults(data.results);
     } catch (error) {
       setError(error instanceof Error ? error.message : "An error occurred");
     } finally {
@@ -346,26 +398,21 @@ export default function NormalSearchPage() {
             />
           </div>
           <div className="flex gap-2">
-            <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
-              <SelectTrigger className="w-[200px] h-11 bg-background/60 backdrop-blur-sm border border-border/50 hover:border-primary/50 transition-all shadow-sm">
-                <SelectValue placeholder="All Sites" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" className="focus:bg-primary/10">
-                  <span className="font-medium">All Sites</span>
-                </SelectItem>
-                <DropdownMenuSeparator />
-                {sites.map((site) => (
-                  <SelectItem
-                    key={site.id}
-                    value={site.id}
-                    className="focus:bg-primary/10"
-                  >
-                    {site.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {!workspaceId && (
+              <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+                <SelectTrigger className="w-[200px] h-11 bg-background/60 backdrop-blur-sm border border-border/50 hover:border-primary/50 transition-all shadow-sm">
+                  <SelectValue placeholder="All SharePoint sites" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All SharePoint sites</SelectItem>
+                  {sites.map((site) => (
+                    <SelectItem key={site.id} value={site.id}>
+                      {site.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -541,6 +588,27 @@ export default function NormalSearchPage() {
             </Button>
           </div>
         </div>
+
+        {/* Workspace filter indicator */}
+        {workspaceName && (
+          <div className="flex items-center gap-2 bg-primary/10 py-2 px-4 rounded-md">
+            <span className="text-sm font-medium">
+              Searching in workspace:{" "}
+              <span className="font-bold">{workspaceName}</span>
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-7 px-2"
+              onClick={() => {
+                window.location.href = "/search/normal";
+              }}
+            >
+              <X className="h-4 w-4 mr-1" />
+              Clear filter
+            </Button>
+          </div>
+        )}
 
         {/* Active Filters Display */}
         {activeFilterCount > 0 && (

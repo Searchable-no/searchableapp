@@ -6,27 +6,22 @@ import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   BarChart3,
-  FileText,
   HelpCircle,
   LogOut,
-  MessageSquare,
   Moon,
   Search,
   Settings,
   Sun,
-  Users,
+  Layout,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 
 const navigation = [
   { title: "Dashboard", href: "/dashboard", icon: BarChart3 },
-  { title: "Search", href: "/search", icon: Search },
-  { title: "Normal Search", href: "/search/normal", icon: Search },
-  { title: "Files", href: "/files", icon: FileText },
-  { title: "Chats", href: "/chats", icon: MessageSquare },
-  { title: "CRM", href: "/crm", icon: Users },
-  { title: "Help", href: "/help", icon: HelpCircle },
+  { title: "Search", href: "/search/normal", icon: Search },
+  { title: "Workspaces", href: "/workspaces", icon: Layout },
   { title: "Settings", href: "/settings", icon: Settings },
+  { title: "Help", href: "/help", icon: HelpCircle },
 ];
 
 export function AppSidebar() {
@@ -67,7 +62,8 @@ export function AppSidebar() {
 
       <nav className="flex-1 space-y-1 p-4">
         {navigation.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive =
+            pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
@@ -94,7 +90,14 @@ export function AppSidebar() {
       <div className="border-t border-sidebar-border p-4 space-y-1">
         {mounted && (
           <button
-            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+            onClick={() => {
+              const newTheme = theme === "light" ? "dark" : "light";
+              setTheme(newTheme);
+              // Store in localStorage as a backup
+              if (typeof window !== "undefined") {
+                localStorage.setItem("theme", newTheme);
+              }
+            }}
             className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
           >
             {theme === "light" ? (
