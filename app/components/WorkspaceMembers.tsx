@@ -39,7 +39,7 @@ interface WorkspaceMember {
   user_id: string;
   role: string;
   created_at: string;
-  profiles: {
+  profile: {
     email: string;
     display_name: string | null;
     avatar_url: string | null;
@@ -49,6 +49,13 @@ interface WorkspaceMember {
 interface Owner {
   user_id: string;
   role: string;
+  email: string;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+interface User {
+  id: string;
   email: string;
   display_name: string | null;
   avatar_url: string | null;
@@ -65,6 +72,8 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
   const [owner, setOwner] = useState<Owner | null>(null);
   const [addMemberDialogOpen, setAddMemberDialogOpen] = useState(false);
   const [email, setEmail] = useState("");
+  const [users, setUsers] = useState<User[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
   const [role, setRole] = useState<"viewer" | "editor" | "admin">("viewer");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [removeMemberDialogOpen, setRemoveMemberDialogOpen] = useState(false);
@@ -75,6 +84,48 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
   const isCurrentUserAdmin =
     isCurrentUserOwner ||
     members.some((m) => m.user_id === session?.user?.id && m.role === "admin");
+
+  // Load available users when dialog opens
+  useEffect(() => {
+    const fetchUsers = async () => {
+      setLoadingUsers(true);
+      try {
+        const response = await fetch("/api/users");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to fetch users");
+        }
+
+        if (!data.users || data.users.length === 0) {
+          console.warn("No users returned from API");
+          setUsers([]);
+          setLoadingUsers(false);
+          return;
+        }
+
+        // Filter out users who are already members
+        const memberUserIds = members.map((m) => m.user_id);
+        if (owner) memberUserIds.push(owner.user_id);
+
+        const filteredUsers = data.users.filter(
+          (user: User) => !memberUserIds.includes(user.id)
+        );
+
+        setUsers(filteredUsers);
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        toast.error("Could not load users");
+        setUsers([]);
+      } finally {
+        setLoadingUsers(false);
+      }
+    };
+
+    if (addMemberDialogOpen) {
+      fetchUsers();
+    }
+  }, [addMemberDialogOpen, members, owner]);
 
   useEffect(() => {
     fetchMembers();
@@ -125,6 +176,7 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
 
     setIsSubmitting(true);
     try {
+      // First add the member to the workspace
       const response = await fetch("/api/workspaces/members", {
         method: "POST",
         headers: {
@@ -136,7 +188,27 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to add member");
+        if (response.status === 404) {
+          // User not found
+          throw new Error(
+            `User with email ${email} not found in the system. They need to register first.`
+          );
+        } else {
+          throw new Error(data.error || "Failed to add member");
+        }
+      }
+
+      // Then send the invitation email
+      const inviteResponse = await fetch("/api/workspaces/invite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ workspaceId, email }),
+      });
+
+      if (!inviteResponse.ok) {
+        console.warn("Failed to send invitation, but member was added");
       }
 
       toast.success("Medlem lagt til");
@@ -144,9 +216,34 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
       setEmail("");
       setRole("viewer");
       fetchMembers();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error adding member:", error);
-      toast.error("Kunne ikke legge til medlem");
+
+      // Check if it's a known error message
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("not found in the system") ||
+        errorMessage.includes("Cannot find user with email")
+      ) {
+        toast.error(
+          <div>
+            <p>{errorMessage}</p>
+            <a
+              href="/setup-user-lookup"
+              className="text-white underline block mt-2"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Setup User Lookup Functions →
+            </a>
+          </div>
+        );
+      } else {
+        toast.error(
+          "Kunne ikke legge til medlem. Sjekk at brukeren eksisterer i systemet."
+        );
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -267,8 +364,8 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
             <DialogHeader>
               <DialogTitle>Legg til medlem</DialogTitle>
               <DialogDescription>
-                Inviter en person til dette arbeidsområdet ved å legge til deres
-                e-postadresse.
+                Inviter en person til dette arbeidsområdet. Brukeren må allerede
+                være registrert i systemet med den e-postadressen du angir.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddMember} className="space-y-4 py-4">
@@ -288,6 +385,50 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
                     />
                   </div>
                 </div>
+
+                {loadingUsers && (
+                  <div className="text-sm text-muted-foreground mt-2">
+                    Laster brukere...
+                  </div>
+                )}
+
+                {users.length > 0 && !loadingUsers && (
+                  <div className="text-sm text-muted-foreground mt-2">
+                    <p className="mb-1">
+                      Tilgjengelige brukere (klikk for å velge):
+                    </p>
+                    <ul className="list-disc pl-5">
+                      {users.slice(0, 5).map((user) => (
+                        <li
+                          key={user.id}
+                          className="cursor-pointer hover:text-blue-500"
+                          onClick={() => setEmail(user.email)}
+                        >
+                          {user.display_name || user.email}
+                        </li>
+                      ))}
+                      {users.length > 5 && (
+                        <li className="text-xs italic">
+                          og {users.length - 5} flere...
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                {!loadingUsers && users.length === 0 && (
+                  <div className="text-sm text-amber-600 mt-2 p-2 bg-amber-50 rounded-md">
+                    <p className="font-medium">
+                      Ingen eksisterende brukere funnet
+                    </p>
+                    <p className="mt-1">
+                      Brukeren må være registrert i Supabase med en
+                      e-postadresse for å kunne legges til. Be brukeren om å
+                      logge inn i systemet først hvis de ikke allerede har gjort
+                      det.
+                    </p>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="role">Rolle</Label>
@@ -321,7 +462,7 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
                 >
                   Avbryt
                 </Button>
-                <Button type="submit" disabled={isSubmitting}>
+                <Button type="submit" disabled={isSubmitting || !email.trim()}>
                   {isSubmitting ? "Legger til..." : "Legg til"}
                 </Button>
               </DialogFooter>
@@ -388,19 +529,19 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
                 <div className="flex items-center gap-4">
                   <Avatar className="h-10 w-10 border">
                     <AvatarImage
-                      src={member.profiles.avatar_url || ""}
-                      alt={member.profiles.display_name || "User"}
+                      src={member.profile?.avatar_url || ""}
+                      alt={member.profile?.display_name || "User"}
                     />
                     <AvatarFallback>
-                      {getInitials(member.profiles.display_name)}
+                      {getInitials(member.profile?.display_name)}
                     </AvatarFallback>
                   </Avatar>
                   <div>
                     <div className="font-medium">
-                      {member.profiles.display_name || "Ukjent bruker"}
+                      {member.profile?.display_name || "Ukjent bruker"}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {member.profiles.email}
+                      {member.profile?.email}
                     </div>
                   </div>
                 </div>
@@ -445,8 +586,8 @@ export function WorkspaceMembers({ workspaceId }: WorkspaceMembersProps) {
                           onClick={() => {
                             setSelectedMemberId(member.id);
                             setSelectedMemberName(
-                              member.profiles.display_name ||
-                                member.profiles.email
+                              member.profile?.display_name ||
+                                member.profile?.email
                             );
                             setRemoveMemberDialogOpen(true);
                           }}

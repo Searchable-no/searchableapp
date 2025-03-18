@@ -1,3 +1,7 @@
+-- Add is_placeholder and invited_by fields to profiles table
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_placeholder BOOLEAN DEFAULT false;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS invited_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+
 -- Create workspace_members table for sharing workspaces
 CREATE TABLE IF NOT EXISTS workspace_members (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

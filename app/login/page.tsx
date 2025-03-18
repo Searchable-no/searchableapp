@@ -15,6 +15,11 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
+// Define error type
+type AuthError = {
+  message: string;
+};
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -40,8 +45,9 @@ export default function LoginPage() {
 
       router.push("/dashboard");
       router.refresh();
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error: unknown) {
+      const authError = error as AuthError;
+      toast.error(authError.message);
     } finally {
       setLoading(false);
     }
@@ -65,8 +71,9 @@ export default function LoginPage() {
       }
 
       toast.success("Check your email for the confirmation link!");
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error: unknown) {
+      const authError = error as AuthError;
+      toast.error(authError.message);
     } finally {
       setLoading(false);
     }
@@ -87,8 +94,9 @@ export default function LoginPage() {
 
       toast.success("Check your email for the password reset link!");
       setResetDialogOpen(false);
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error: unknown) {
+      const authError = error as AuthError;
+      toast.error(authError.message);
     } finally {
       setResetLoading(false);
     }

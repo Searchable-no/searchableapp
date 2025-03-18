@@ -7,6 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
+// Define error type
+type AuthError = {
+  message: string;
+};
+
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -80,9 +85,10 @@ export default function ResetPasswordPage() {
       setTimeout(() => {
         router.push("/login");
       }, 2000);
-    } catch (error: any) {
-      setError(error.message);
-      toast.error(error.message);
+    } catch (error: unknown) {
+      const authError = error as AuthError;
+      setError(authError.message);
+      toast.error(authError.message);
     } finally {
       setLoading(false);
     }
