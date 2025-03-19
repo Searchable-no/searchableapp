@@ -97,8 +97,11 @@ export interface PlannerTask {
   planTitle?: string
   bucketId: string
   bucketName?: string
+  percentComplete: number
   type: 'planner'
   webUrl?: string
+  description?: string
+  priority?: number
 }
 
 export interface Team {
@@ -625,7 +628,7 @@ export async function getRecentPlannerTasks(userId: string): Promise<PlannerTask
         }
         if (a.dueDateTime) return -1
         if (b.dueDateTime) return 1
-        return b.priority - a.priority
+        return (b.priority || 0) - (a.priority || 0)
       })
       .slice(0, 10) // Get only the 10 most relevant tasks
   } catch (error) {
@@ -1044,54 +1047,185 @@ export async function addTeamMember(userId: string, teamId: string, memberEmail:
 }
 
 export async function getTaskComments(userId: string, taskId: string): Promise<PlannerTaskComment[]> {
+  console.log(`Starting to fetch comments for task ID: ${taskId}`);
+  
   try {
-    const accessToken = await getValidAccessToken(userId)
-    const graphClient = await getGraphClient(accessToken)
-
-    const response = await graphClient
-      .api(`/planner/tasks/${taskId}/details`)
-      .get()
-
-    if (!response?.comments) {
-      return []
+    const accessToken = await getValidAccessToken(userId);
+    
+    if (!accessToken) {
+      console.error('Failed to get valid access token for fetching comments');
+      return [];
     }
+    
+    const graphClient = await getGraphClient(accessToken);
+    
+    console.log(`Fetching task details to get comments for task ID: ${taskId}`);
+    
+    try {
+      const response = await graphClient
+        .api(`/planner/tasks/${taskId}/details`)
+        .get();
 
-    // Convert the comments object to our PlannerTaskComment format
-    return Object.entries(response.comments).map(([id, comment]: [string, any]) => ({
-      id,
-      content: comment.message,
-      createdDateTime: comment.createdDateTime,
-      user: {
-        displayName: comment.user.displayName,
-        id: comment.user.id
+      if (!response) {
+        console.warn(`No details found for task ${taskId}`);
+        return [];
       }
-    }))
-  } catch (error) {
-    console.error('Error in getTaskComments:', error)
-    return []
+      
+      console.log(`Got task details with ${Object.keys(response.comments || {}).length} comments`);
+
+      if (!response?.comments || Object.keys(response.comments).length === 0) {
+        console.log(`No comments found for task ${taskId}`);
+        return [];
+      }
+
+      // Convert the comments object to our PlannerTaskComment format
+      return Object.entries(response.comments)
+        .map(([id, comment]: [string, any]) => ({
+          id,
+          content: comment.message || '',
+          createdDateTime: comment.createdDateTime || new Date().toISOString(),
+          user: {
+            displayName: comment.user?.displayName || 'Unknown User',
+            id: comment.user?.id || 'unknown'
+          }
+        }))
+        .sort((a, b) => new Date(b.createdDateTime).getTime() - new Date(a.createdDateTime).getTime());
+    } catch (detailsError: any) {
+      console.error('Error fetching task details for comments:', {
+        message: detailsError.message,
+        code: detailsError.code,
+        statusCode: detailsError.statusCode
+      });
+      throw detailsError;
+    }
+  } catch (error: any) {
+    console.error('Error in getTaskComments:', {
+      message: error.message,
+      code: error.code,
+      statusCode: error.statusCode,
+      body: error.body ? JSON.stringify(error.body, null, 2) : undefined
+    });
+    return [];
   }
 }
 
 export async function addTaskComment(userId: string, taskId: string, content: string): Promise<boolean> {
+  console.log(`Adding comment to task ${taskId}`);
+  
+  if (!content.trim()) {
+    console.error('Cannot add empty comment');
+    return false;
+  }
+  
   try {
-    const accessToken = await getValidAccessToken(userId)
-    const graphClient = await getGraphClient(accessToken)
-
-    await graphClient
-      .api(`/planner/tasks/${taskId}/details`)
-      .update({
-        comments: {
-          [new Date().getTime().toString()]: {
-            message: content,
-            createdDateTime: new Date().toISOString()
-          }
+    const accessToken = await getValidAccessToken(userId);
+    
+    if (!accessToken) {
+      console.error('Failed to get valid access token for adding comment');
+      return false;
+    }
+    
+    const graphClient = await getGraphClient(accessToken);
+    
+    // First get the current task details to get the etag
+    console.log(`Fetching task details to get etag for task ${taskId}`);
+    let currentDetails: { '@odata.etag'?: string; comments?: Record<string, any> } = {};
+    try {
+      currentDetails = await graphClient
+        .api(`/planner/tasks/${taskId}/details`)
+        .get();
+      
+      console.log(`Got task details with etag: ${currentDetails['@odata.etag']}`);
+    } catch (detailsError: any) {
+      // If details don't exist yet, we'll create them
+      if (detailsError.statusCode === 404) {
+        console.log('Task details do not exist yet, will create with comment');
+        try {
+          // Create details with the comment
+          await graphClient
+            .api(`/planner/tasks/${taskId}/details`)
+            .post({
+              description: '',
+              comments: {
+                [new Date().getTime().toString()]: {
+                  message: content,
+                  createdDateTime: new Date().toISOString()
+                }
+              }
+            });
+          
+          console.log('Successfully created task details with comment');
+          return true;
+        } catch (createError: any) {
+          console.error('Error creating task details with comment:', {
+            message: createError.message,
+            code: createError.code,
+            statusCode: createError.statusCode
+          });
+          return false;
         }
-      })
-
-    return true
-  } catch (error) {
-    console.error('Error in addTaskComment:', error)
-    return false
+      }
+      
+      console.error('Error fetching task details for adding comment:', {
+        message: detailsError.message,
+        code: detailsError.code,
+        statusCode: detailsError.statusCode
+      });
+      return false;
+    }
+    
+    if (!currentDetails['@odata.etag']) {
+      console.error('No etag found in task details, cannot update');
+      return false;
+    }
+    
+    // Create a new comment
+    const commentId = new Date().getTime().toString();
+    const comment = {
+      message: content,
+      createdDateTime: new Date().toISOString()
+    };
+    
+    // Add the new comment to existing comments
+    const existingComments: Record<string, any> = currentDetails.comments || {};
+    const updatedComments = {
+      ...existingComments,
+      [commentId]: comment
+    };
+    
+    try {
+      console.log(`Updating task details with new comment (ID: ${commentId})`);
+      await graphClient
+        .api(`/planner/tasks/${taskId}/details`)
+        .header('If-Match', currentDetails['@odata.etag'])
+        .patch({
+          comments: updatedComments
+        });
+      
+      console.log('Comment added successfully');
+      return true;
+    } catch (updateError: any) {
+      if (updateError.statusCode === 412) {
+        console.error('Precondition failed (412): Task details modified by another process');
+        // Could implement retry logic here
+      }
+      
+      console.error('Error updating task details with comment:', {
+        message: updateError.message,
+        code: updateError.code,
+        statusCode: updateError.statusCode,
+        body: updateError.body ? JSON.stringify(updateError.body, null, 2) : undefined
+      });
+      return false;
+    }
+  } catch (error: any) {
+    console.error('Error in addTaskComment:', {
+      message: error.message,
+      code: error.code,
+      statusCode: error.statusCode,
+      body: error.body ? JSON.stringify(error.body, null, 2) : undefined
+    });
+    return false;
   }
 }
 
@@ -1198,25 +1332,28 @@ export async function searchSharePointFiles(
 
     if (fileSearchResponse.value?.[0]?.hitsContainers?.[0]?.hits) {
       const fileResults = fileSearchResponse.value[0].hitsContainers[0].hits
-        .map((hit: any) => ({
-          id: hit.resource.id,
-          name: hit.resource.name || 'Untitled',
-          webUrl: hit.resource.webUrl,
-          lastModifiedDateTime: hit.resource.lastModifiedDateTime,
-          size: hit.resource.size || 0,
-          type: hit.resource.folder ? 'folder' as const : 'file' as const,
-          createdBy: {
-            user: {
-              displayName: hit.resource.createdBy?.user?.displayName || hit.resource.createdBy?.email || 'Unknown'
-            }
-          },
-          lastModifiedBy: {
-            user: {
-              displayName: hit.resource.lastModifiedBy?.user?.displayName || hit.resource.lastModifiedBy?.email || 'Unknown'
-            }
-          },
-          siteId: hit.resource.parentReference?.siteId
-        }));
+        .map((hit: any) => {
+          const resource = hit.resource || {};
+          return {
+            id: resource.id,
+            name: resource.name || 'Untitled',
+            webUrl: resource.webUrl,
+            lastModifiedDateTime: resource.lastModifiedDateTime,
+            size: resource.size || 0,
+            type: resource.folder ? 'folder' as const : 'file' as const,
+            createdBy: {
+              user: {
+                displayName: resource.createdBy?.user?.displayName || resource.createdBy?.email || 'Unknown'
+              }
+            },
+            lastModifiedBy: {
+              user: {
+                displayName: resource.lastModifiedBy?.user?.displayName || resource.lastModifiedBy?.email || 'Unknown'
+              }
+            },
+            siteId: resource.parentReference?.siteId
+          };
+        });
 
       // If siteId is provided, only include results from that site
       results.push(...(siteId 

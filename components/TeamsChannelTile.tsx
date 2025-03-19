@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { TeamsMessageDialog } from "@/components/TeamsMessageDialog";
 import { formatDistanceToNow } from "date-fns";
+import { cn } from "@/lib/utils";
 
 interface TeamsChannelTileProps {
   messages: TeamsChannelMessage[];
   isLoading: boolean;
+  isCachedData?: boolean;
 }
 
 function formatMessageContent(content: string): string {
@@ -49,6 +51,7 @@ function groupMessagesByTeam(messages: TeamsChannelMessage[]) {
 export function TeamsChannelTile({
   messages,
   isLoading,
+  isCachedData = false,
 }: TeamsChannelTileProps) {
   const [showAll, setShowAll] = useState(false);
   const [selectedMessage, setSelectedMessage] =
@@ -59,17 +62,17 @@ export function TeamsChannelTile({
   if (isLoading) {
     return (
       <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
-        <CardHeader className="py-2 px-3 border-b flex-none">
-          <CardTitle className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-md bg-primary/10">
-                <MessageSquare className="h-3.5 w-3.5 text-primary" />
+        <CardHeader className="py-1.5 px-2.5 border-b flex-none">
+          <CardTitle className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="p-1 rounded-md bg-primary/10">
+                <MessageSquare className="h-3 w-3 text-primary" />
               </div>
               <span>Teams Channels</span>
             </div>
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-3 flex-1">
+        <CardContent className="p-2 flex-1">
           <div className="space-y-3">
             <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
             <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
@@ -81,20 +84,37 @@ export function TeamsChannelTile({
   }
 
   return (
-    <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
-      <CardHeader className="py-2 px-3 border-b flex-none">
-        <CardTitle className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-md bg-primary/10">
-              <MessageSquare className="h-3.5 w-3.5 text-primary" />
+    <Card className={cn(
+      "h-full bg-gradient-to-br from-background to-muted/50 flex flex-col",
+      isCachedData && "border-dashed"
+    )}>
+      <CardHeader className={cn(
+        "py-1.5 px-2.5 border-b flex-none",
+        isCachedData && "bg-muted/20"
+      )}>
+        <CardTitle className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5">
+            <div className={cn(
+              "p-1 rounded-md bg-primary/10",
+              isCachedData && "bg-muted/30"
+            )}>
+              <MessageSquare className={cn(
+                "h-3 w-3 text-primary",
+                isCachedData && "text-muted-foreground"
+              )} />
             </div>
             <span>Teams Channels</span>
+            {isCachedData && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-muted/30 text-muted-foreground ml-1">
+                Cached
+              </span>
+            )}
           </div>
           {messages.length > 0 && (
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-xs px-2 rounded-md hover:bg-muted/50"
+              className="h-6 text-xs px-2 rounded-md hover:bg-muted/50"
               onClick={() =>
                 window.open("https://teams.microsoft.com", "_blank")
               }
@@ -105,18 +125,18 @@ export function TeamsChannelTile({
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 flex-1 overflow-y-auto">
+      <CardContent className="p-2 flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <MessageSquare className="h-8 w-8 mb-3 opacity-50" />
-            <p className="text-sm">No channel messages</p>
+            <MessageSquare className="h-6 w-6 mb-2 opacity-50" />
+            <p className="text-xs">No channel messages</p>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {Object.entries(groupedMessages).map(([teamName, channels]) => (
-              <div key={teamName} className="space-y-3">
-                <h3 className="text-sm font-medium text-foreground flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+              <div key={teamName} className="space-y-2">
+                <h3 className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                  <div className="w-5 h-5 rounded-md bg-primary/10 text-primary flex items-center justify-center">
                     <MessageSquare className="h-3 w-3" />
                   </div>
                   <span className="truncate">{teamName}</span>
@@ -125,23 +145,23 @@ export function TeamsChannelTile({
                   ([channelName, channelMessages]) => (
                     <div
                       key={`${teamName}-${channelName}`}
-                      className="space-y-2 ml-8"
+                      className="space-y-1.5 ml-6"
                     >
-                      <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                      <h4 className="text-[10px] font-medium text-muted-foreground flex items-center gap-1">
                         <span className="flex-none">#</span>
                         <span className="truncate">{channelName}</span>
                       </h4>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         {channelMessages.map((message) => (
                           <div
                             key={message.id}
-                            className="group p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border"
+                            className="group p-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors border border-transparent hover:border-border"
                             onClick={() => setSelectedMessage(message)}
                           >
-                            <div className="flex items-start gap-3 min-w-0">
-                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                            <div className="flex items-start gap-2 min-w-0">
+                              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center">
                                 {message.from?.user?.displayName ? (
-                                  <span className="text-xs font-medium">
+                                  <span className="text-[10px] font-medium">
                                     {message.from.user.displayName
                                       .split(" ")
                                       .map((n) => n[0])
@@ -150,17 +170,17 @@ export function TeamsChannelTile({
                                       .slice(0, 2)}
                                   </span>
                                 ) : (
-                                  <MessageSquare className="h-4 w-4" />
+                                  <MessageSquare className="h-3 w-3" />
                                 )}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
-                                    <p className="text-sm font-medium truncate">
+                                    <p className="text-xs font-medium truncate">
                                       {message.from?.user?.displayName ||
                                         "Unknown User"}
                                     </p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">
                                       {formatDistanceToNow(
                                         new Date(
                                           message.createdDateTime || Date.now()
@@ -174,7 +194,7 @@ export function TeamsChannelTile({
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           window.open(message.webUrl, "_blank");
@@ -187,7 +207,7 @@ export function TeamsChannelTile({
                                       </Button>
                                     )}
                                 </div>
-                                <div className="mt-1 text-sm text-muted-foreground line-clamp-2 break-words">
+                                <div className="mt-1 text-xs text-muted-foreground line-clamp-2 break-words">
                                   {message.content
                                     ? formatMessageContent(message.content)
                                     : ""}
@@ -206,7 +226,7 @@ export function TeamsChannelTile({
               <Button
                 variant="ghost"
                 size="sm"
-                className="w-full text-xs h-7 rounded-md hover:bg-muted/50"
+                className="w-full text-xs h-6 rounded-md hover:bg-muted/50"
                 onClick={() => setShowAll(!showAll)}
               >
                 {showAll ? "Show Less" : `Show ${messages.length - 5} More`}

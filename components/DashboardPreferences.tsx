@@ -224,123 +224,210 @@ export function DashboardPreferences({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="icon">
-          <Settings className="h-5 w-5" />
+        <Button 
+          variant="outline" 
+          size="icon" 
+          className="h-8 w-8 rounded-lg hover:bg-primary/10 transition-colors"
+        >
+          <Settings className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Dashboard Preferences</DialogTitle>
-          <DialogDescription>
+      <DialogContent className="sm:max-w-[550px] max-h-[85vh] overflow-y-auto">
+        <DialogHeader className="space-y-1">
+          <DialogTitle className="text-lg">Dashboard Preferences</DialogTitle>
+          <DialogDescription className="text-sm">
             Customize your dashboard layout and appearance.
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="tiles" className="w-full">
+        <Tabs defaultValue="tiles" className="w-full mt-2">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="tiles">Tiles</TabsTrigger>
-            <TabsTrigger value="appearance">Appearance</TabsTrigger>
-            <TabsTrigger value="behavior">Behavior</TabsTrigger>
+            <TabsTrigger value="tiles" className="text-xs">Tiles</TabsTrigger>
+            <TabsTrigger value="appearance" className="text-xs">Appearance</TabsTrigger>
+            <TabsTrigger value="behavior" className="text-xs">Behavior</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="tiles" className="space-y-4">
+          <TabsContent value="tiles" className="space-y-3 mt-2">
             <Card>
-              <CardContent className="pt-6">
-                <CardDescription className="mb-4">
+              <CardContent className="pt-4 pb-3">
+                <CardDescription className="mb-3 text-xs">
                   Enable or disable tiles and drag to reorder them.
                 </CardDescription>
-                <DragDropContext onDragEnd={handleDragEnd}>
-                  <Droppable droppableId="tiles">
-                    {(provided: DroppableProvided) => (
-                      <div
-                        {...provided.droppableProps}
-                        ref={provided.innerRef}
-                        className="space-y-2"
-                      >
-                        {preferences.enabledTiles.map((tile, index) => (
-                          <Draggable
-                            key={tile}
-                            draggableId={tile}
-                            index={index}
-                          >
-                            {(provided: DraggableProvided) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.draggableProps}
-                                className="flex items-center justify-between p-2 bg-secondary/50 rounded-lg"
-                              >
-                                <div className="flex items-center gap-4">
-                                  <div {...provided.dragHandleProps}>
-                                    <GripVertical className="h-5 w-5 text-muted-foreground" />
+                <div className="space-y-3">
+                  <DragDropContext onDragEnd={handleDragEnd}>
+                    <Droppable droppableId="tiles">
+                      {(provided: DroppableProvided) => (
+                        <div
+                          {...provided.droppableProps}
+                          ref={provided.innerRef}
+                          className="space-y-2"
+                        >
+                          {preferences.enabledTiles.map((tile, index) => (
+                            <Draggable
+                              key={tile}
+                              draggableId={tile}
+                              index={index}
+                            >
+                              {(provided: DraggableProvided) => (
+                                <div
+                                  ref={provided.innerRef}
+                                  {...provided.draggableProps}
+                                  className="flex items-center justify-between p-2 bg-muted/50 rounded-md border"
+                                >
+                                  <div
+                                    {...provided.dragHandleProps}
+                                    className="flex items-center gap-2"
+                                  >
+                                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-base">
+                                        {tileIcons[tile]}
+                                      </span>
+                                      <span className="text-xs font-medium">
+                                        {tileNames[tile]}
+                                      </span>
+                                    </div>
                                   </div>
-                                  <span className="text-lg mr-2">
-                                    {tileIcons[tile]}
-                                  </span>
-                                  <Label htmlFor={tile} className="font-medium">
-                                    {tileNames[tile]}
-                                  </Label>
+                                  <div className="flex items-center gap-2">
+                                    <Select
+                                      value={
+                                        preferences.tilePreferences[tile].size
+                                      }
+                                      onValueChange={(value) =>
+                                        updateTilePreference(
+                                          tile,
+                                          "size",
+                                          value as any
+                                        )
+                                      }
+                                    >
+                                      <SelectTrigger className="w-[100px] h-7 text-xs">
+                                        <SelectValue placeholder="Size" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="compact" className="text-xs">Compact</SelectItem>
+                                        <SelectItem value="normal" className="text-xs">Normal</SelectItem>
+                                        <SelectItem value="large" className="text-xs">Large</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Switch
+                                      id={`tile-${tile}`}
+                                      checked={preferences.enabledTiles.includes(
+                                        tile
+                                      )}
+                                      onCheckedChange={() => toggleTile(tile)}
+                                      className="scale-75"
+                                    />
+                                  </div>
                                 </div>
-                                <Switch
-                                  id={tile}
-                                  checked={preferences.enabledTiles.includes(
-                                    tile
-                                  )}
-                                  onCheckedChange={() => toggleTile(tile)}
-                                />
-                              </div>
-                            )}
-                          </Draggable>
-                        ))}
-                        {provided.placeholder}
+                              )}
+                            </Draggable>
+                          ))}
+                          {provided.placeholder}
+                        </div>
+                      )}
+                    </Droppable>
+                  </DragDropContext>
+
+                  {allTiles
+                    .filter((tile) => !preferences.enabledTiles.includes(tile))
+                    .map((tile) => (
+                      <div
+                        key={tile}
+                        className="flex items-center justify-between p-2 bg-background rounded-md border"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-base">{tileIcons[tile]}</span>
+                          <span className="text-xs font-medium">
+                            {tileNames[tile]}
+                          </span>
+                        </div>
+                        <Switch
+                          id={`tile-${tile}`}
+                          checked={preferences.enabledTiles.includes(tile)}
+                          onCheckedChange={() => toggleTile(tile)}
+                          className="scale-75"
+                        />
                       </div>
-                    )}
-                  </Droppable>
-                </DragDropContext>
+                    ))}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="appearance" className="space-y-4">
+          <TabsContent value="appearance" className="space-y-3 mt-2">
             <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Theme</Label>
-                    <div className="flex items-center justify-between">
-                      <Select
-                        value={preferences.theme}
-                        onValueChange={(value: "light" | "dark" | "system") => {
-                          setPreferences((prev) => ({ ...prev, theme: value }));
-                          // Also update localStorage for consistency with sidebar toggle
-                          if (typeof window !== "undefined") {
-                            localStorage.setItem("theme", value);
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="light">
-                            <div className="flex items-center gap-2">
-                              <Sun className="h-4 w-4" />
-                              <span>Light</span>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="dark">
-                            <div className="flex items-center gap-2">
-                              <Moon className="h-4 w-4" />
-                              <span>Dark</span>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="system">
-                            <div className="flex items-center gap-2">
-                              <Monitor className="h-4 w-4" />
-                              <span>System</span>
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
+              <CardContent className="pt-4 pb-3">
+                <CardDescription className="mb-3 text-xs">
+                  Change theme preferences.
+                </CardDescription>
+                <div className="space-y-3">
+                  <div
+                    className={cn(
+                      "flex items-center justify-between p-2 rounded-md border cursor-pointer",
+                      preferences.theme === "light" && "bg-muted/50"
+                    )}
+                    onClick={() =>
+                      setPreferences((prev) => ({
+                        ...prev,
+                        theme: "light",
+                      }))
+                    }
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Sun className="h-3.5 w-3.5 text-yellow-500" />
+                      <span className="text-xs font-medium">Light Theme</span>
+                    </div>
+                    <div className="h-3.5 w-3.5 rounded-full bg-primary flex items-center justify-center">
+                      {preferences.theme === "light" && (
+                        <div className="h-1.5 w-1.5 rounded-full bg-white"></div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "flex items-center justify-between p-2 rounded-md border cursor-pointer",
+                      preferences.theme === "dark" && "bg-muted/50"
+                    )}
+                    onClick={() =>
+                      setPreferences((prev) => ({
+                        ...prev,
+                        theme: "dark",
+                      }))
+                    }
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Moon className="h-3.5 w-3.5 text-blue-400" />
+                      <span className="text-xs font-medium">Dark Theme</span>
+                    </div>
+                    <div className="h-3.5 w-3.5 rounded-full bg-primary flex items-center justify-center">
+                      {preferences.theme === "dark" && (
+                        <div className="h-1.5 w-1.5 rounded-full bg-white"></div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "flex items-center justify-between p-2 rounded-md border cursor-pointer",
+                      preferences.theme === "system" && "bg-muted/50"
+                    )}
+                    onClick={() =>
+                      setPreferences((prev) => ({
+                        ...prev,
+                        theme: "system",
+                      }))
+                    }
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Monitor className="h-3.5 w-3.5 text-green-500" />
+                      <span className="text-xs font-medium">System Theme</span>
+                    </div>
+                    <div className="h-3.5 w-3.5 rounded-full bg-primary flex items-center justify-center">
+                      {preferences.theme === "system" && (
+                        <div className="h-1.5 w-1.5 rounded-full bg-white"></div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -348,63 +435,50 @@ export function DashboardPreferences({
             </Card>
           </TabsContent>
 
-          <TabsContent value="behavior" className="space-y-4">
+          <TabsContent value="behavior" className="space-y-3 mt-2">
             <Card>
-              <CardContent className="pt-6 space-y-6">
-                {preferences.enabledTiles.map((tile) => (
-                  <div key={tile} className="space-y-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{tileIcons[tile]}</span>
-                      <h3 className="font-medium">{tileNames[tile]}</h3>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4 ml-8">
-                      <div className="space-y-2">
-                        <Label>Size</Label>
-                        <Select
-                          value={preferences.tilePreferences[tile].size}
-                          onValueChange={(
-                            value: "compact" | "normal" | "large"
-                          ) => updateTilePreference(tile, "size", value)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="compact">Compact</SelectItem>
-                            <SelectItem value="normal">Normal</SelectItem>
-                            <SelectItem value="large">Large</SelectItem>
-                          </SelectContent>
-                        </Select>
+              <CardContent className="pt-4 pb-3">
+                <CardDescription className="mb-3 text-xs">
+                  Configure tile behavior and refresh intervals.
+                </CardDescription>
+                <div className="space-y-3">
+                  {preferences.enabledTiles.map((tile) => (
+                    <div
+                      key={`refresh-${tile}`}
+                      className="flex items-center justify-between p-2 bg-muted/50 rounded-md border"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">{tileIcons[tile]}</span>
+                        <span className="text-xs font-medium">
+                          {tileNames[tile]}
+                        </span>
                       </div>
-                      <div className="space-y-2">
-                        <Label>Refresh Interval</Label>
-                        <Select
-                          value={preferences.tilePreferences[
-                            tile
-                          ].refreshInterval.toString()}
-                          onValueChange={(value) =>
-                            updateTilePreference(
-                              tile,
-                              "refreshInterval",
-                              parseInt(value)
-                            )
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="60">1 minute</SelectItem>
-                            <SelectItem value="300">5 minutes</SelectItem>
-                            <SelectItem value="600">10 minutes</SelectItem>
-                            <SelectItem value="1800">30 minutes</SelectItem>
-                            <SelectItem value="3600">1 hour</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      <Select
+                        value={
+                          preferences.tilePreferences[tile].refreshInterval.toString()
+                        }
+                        onValueChange={(value) =>
+                          updateTilePreference(
+                            tile,
+                            "refreshInterval",
+                            parseInt(value)
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-[120px] h-7 text-xs">
+                          <SelectValue placeholder="Refresh" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="60" className="text-xs">Every 1 minute</SelectItem>
+                          <SelectItem value="300" className="text-xs">Every 5 minutes</SelectItem>
+                          <SelectItem value="600" className="text-xs">Every 10 minutes</SelectItem>
+                          <SelectItem value="1800" className="text-xs">Every 30 minutes</SelectItem>
+                          <SelectItem value="3600" className="text-xs">Every hour</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -413,15 +487,16 @@ export function DashboardPreferences({
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => {
-              setPreferences(initialPreferences);
-              setOpen(false);
-            }}
-            disabled={saving}
+            onClick={() => setOpen(false)}
+            className="h-8 text-xs"
           >
             Cancel
           </Button>
-          <Button onClick={savePreferences} disabled={saving}>
+          <Button
+            onClick={savePreferences}
+            disabled={saving}
+            className="h-8 text-xs"
+          >
             {saving ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>

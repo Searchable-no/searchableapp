@@ -39,7 +39,9 @@ export default async function RootLayout({
         >
           <div className="flex min-h-screen">
             {session && <AppSidebar />}
-            {children}
+            <div className="flex-1 overflow-auto">
+              {children}
+            </div>
           </div>
           <Toaster />
         </ThemeProvider>
