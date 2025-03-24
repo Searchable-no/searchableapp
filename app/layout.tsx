@@ -14,7 +14,19 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Searchable",
-  description: "Search across your business data",
+  description: "A search-enabled dashboard for your workspace",
+  manifest: '/manifest.json',
+  themeColor: '#000000',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Searchable',
+  },
+  viewport: {
+    width: 'device-width',
+    initialScale: 1,
+    maximumScale: 1,
+  },
 };
 
 export default async function RootLayout({

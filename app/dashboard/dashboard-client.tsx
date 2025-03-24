@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { TeamsDialog } from "@/components/TeamsDialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { usePathname, useSearchParams } from "next/navigation";
 
 const tileComponents: Record<TileType, React.ComponentType<any>> = {
   email: EmailTile,
@@ -110,8 +111,30 @@ const isCacheExpired = (timestamp: string | undefined | null, maxAge: number) =>
 
 // Cache key for dashboard data
 const DASHBOARD_CACHE_KEY = 'dashboard_cache';
-// Default cache expiry time in seconds (5 minutes)
-const DEFAULT_CACHE_EXPIRY = 300;
+// Default cache expiry time in seconds (30 minutes)
+const DEFAULT_CACHE_EXPIRY = 1800;
+
+// Custom hook to detect navigation events that aren't route changes
+function useIsNavigatingFromDashboard() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [previousPath, setPreviousPath] = useState(pathname);
+  const [isNavigatingFromDashboard, setIsNavigatingFromDashboard] = useState(false);
+
+  useEffect(() => {
+    // Only set isNavigatingFromDashboard to true when we navigate away from dashboard
+    if (previousPath === '/dashboard' && pathname !== '/dashboard') {
+      setIsNavigatingFromDashboard(true);
+    } else if (pathname === '/dashboard') {
+      // Reset when we're back on dashboard
+      setIsNavigatingFromDashboard(false);
+    }
+
+    setPreviousPath(pathname);
+  }, [pathname, searchParams, previousPath]);
+
+  return isNavigatingFromDashboard;
+}
 
 export function DashboardClient() {
   const { user, loading: userLoading } = useUser();
@@ -126,6 +149,7 @@ export function DashboardClient() {
   const [cacheLoaded, setCacheLoaded] = useState(false);
   const { setTheme } = useTheme();
   const [teamsDialogOpen, setTeamsDialogOpen] = useState(false);
+  const isNavigatingFromDashboard = useIsNavigatingFromDashboard();
 
   // First effect: Check cache immediately on mount, before any user data is loaded
   useEffect(() => {
@@ -188,6 +212,12 @@ export function DashboardClient() {
       return;
     }
     
+    // If we're navigating away from dashboard, don't do background refreshes
+    if (isNavigatingFromDashboard) {
+      console.log('NAVIGATION: User is leaving dashboard, skipping refresh');
+      return;
+    }
+    
     // We have some data - determine if we need a background refresh
     const now = new Date();
     const cacheTimestamp = lastRefreshed || now;
@@ -202,7 +232,7 @@ export function DashboardClient() {
       console.log('CACHE: Cache is fresh, no refresh needed');
     }
     
-  }, [user, userLoading, cacheLoaded]); // Only run when auth state changes
+  }, [user, userLoading, cacheLoaded, isNavigatingFromDashboard]); // Add isNavigatingFromDashboard to dependencies
 
   useEffect(() => {
     // Apply theme whenever it changes
@@ -285,7 +315,7 @@ export function DashboardClient() {
       }
       
       console.log(`FETCH: Getting data from server (background: ${isBackgroundRefresh})`);
-      const result = await getData();
+      const result = await getData(undefined, !isBackgroundRefresh);
       
       if (!result.error) {
         console.log('FETCH: Data received successfully');
@@ -340,7 +370,7 @@ export function DashboardClient() {
     // Clear the fresh data flag since we're actively refreshing
     setIsFreshData(false);
     
-    // Start a foreground refresh
+    // Start a foreground refresh with force refresh
     fetchData(false);
   };
 
@@ -465,7 +495,7 @@ export function DashboardClient() {
               console.log('Refreshing planner tasks via tile refresh');
               setRefreshing(true);
               
-              const result = await getData(['planner']);
+              const result = await getData(['planner'], true);
               if (result.plannerTasks) {
                 console.log(`Refreshed ${result.plannerTasks.length} planner tasks`);
                 

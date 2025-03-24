@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   BarChart3,
@@ -13,22 +13,105 @@ import {
   Settings,
   Sun,
   Layout,
+  Shield,
+  FolderKanban,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
+import { useEffect, useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 const navigation = [
   { title: "Dashboard", href: "/dashboard", icon: BarChart3 },
   { title: "Search", href: "/search/normal", icon: Search },
   { title: "Workspaces", href: "/workspaces", icon: Layout },
+  { title: "Projects", href: "/projects", icon: FolderKanban },
   { title: "Settings", href: "/settings", icon: Settings },
   { title: "Help", href: "/help", icon: HelpCircle },
 ];
 
+// Admin navigation item that will be conditionally added
+const adminNavItem = { title: "Admin", href: "/admin", icon: Shield };
+
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const { session } = useSession();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [navItems, setNavItems] = useState([...navigation]);
+  const supabase = createClientComponentClient();
+
+  // Check if current user is admin
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    
+    const checkAdminStatus = async () => {
+      try {
+        console.log("Checking admin status for:", session.user.id);
+        
+        const { data: profile, error } = await supabase
+          .from("profiles")
+          .select("is_admin")
+          .eq("id", session.user.id)
+          .single();
+  
+        if (error) {
+          console.error("Error checking admin status:", error);
+          return;
+        }
+  
+        console.log("Admin status:", profile?.is_admin);
+        
+        if (profile?.is_admin) {
+          setIsAdmin(true);
+          setNavItems(prev => {
+            // Only add the admin nav item if it doesn't already exist
+            if (!prev.find(item => item.href === "/admin")) {
+              return [...navigation, adminNavItem];
+            }
+            return prev;
+          });
+        }
+      } catch (error) {
+        console.error("Error in admin check:", error);
+      }
+    };
+    
+    checkAdminStatus();
+    
+    // Subscribe to profile changes
+    const channel = supabase
+      .channel('profile-changes')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'profiles',
+        filter: `id=eq.${session.user.id}`,
+      }, (payload) => {
+        console.log('Profile updated:', payload);
+        // Check if is_admin field was updated
+        if (payload.new && payload.new.is_admin !== undefined) {
+          if (payload.new.is_admin) {
+            setIsAdmin(true);
+            setNavItems(prev => {
+              if (!prev.find(item => item.href === "/admin")) {
+                return [...navigation, adminNavItem];
+              }
+              return prev;
+            });
+          } else {
+            setIsAdmin(false);
+            setNavItems(navigation);
+          }
+        }
+      })
+      .subscribe();
+      
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session, supabase]);
 
   // Prevent hydration mismatch by only rendering theme switch after mount
   React.useEffect(() => {
@@ -39,6 +122,12 @@ export function AppSidebar() {
   if (!session) {
     return null;
   }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  };
 
   return (
     <div className="flex h-full w-[220px] flex-col bg-sidebar border-r border-sidebar-border">
@@ -61,7 +150,7 @@ export function AppSidebar() {
       </div>
 
       <nav className="flex-1 space-y-0.5 p-3">
-        {navigation.map((item) => {
+        {navItems.map((item) => {
           const isActive =
             pathname === item.href || pathname.startsWith(item.href + "/");
           return (
@@ -109,13 +198,13 @@ export function AppSidebar() {
           </button>
         )}
 
-        <Link
-          href="/logout"
-          className="flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
         >
           <LogOut className="h-4 w-4 text-sidebar-foreground/60" />
           Logout
-        </Link>
+        </button>
       </div>
     </div>
   );

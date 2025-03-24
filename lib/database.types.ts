@@ -2,6 +2,9 @@ export type TileType = 'email' | 'teams_message' | 'teams_channel' | 'calendar' 
 
 export type ResourceType = 'sharepoint' | 'teams' | 'planner'
 
+// New project-related types
+export type ProjectColumnType = 'text' | 'number' | 'date' | 'select' | 'multiselect' | 'user' | 'team' | 'boolean'
+
 export interface Database {
   public: {
     Tables: {
@@ -126,6 +129,129 @@ export interface Database {
             refreshInterval: number
           }>
           theme?: 'light' | 'dark' | 'system'
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      // New tables for premium project functionality
+      projects: {
+        Row: {
+          id: string
+          name: string
+          description: string
+          workspace_id: string
+          sharepoint_site_id?: string
+          team_id?: string
+          created_by: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          description: string
+          workspace_id: string
+          sharepoint_site_id?: string
+          team_id?: string
+          created_by: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string
+          workspace_id?: string
+          sharepoint_site_id?: string
+          team_id?: string
+          created_by?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      project_columns: {
+        Row: {
+          id: string
+          project_id: string
+          name: string
+          type: ProjectColumnType
+          required: boolean
+          options?: string[] // For select/multiselect types
+          order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          name: string
+          type: ProjectColumnType
+          required: boolean
+          options?: string[]
+          order: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          name?: string
+          type?: ProjectColumnType
+          required?: boolean
+          options?: string[]
+          order?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      project_items: {
+        Row: {
+          id: string
+          project_id: string
+          values: Record<string, any> // Maps column ID to value
+          created_by: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          values: Record<string, any>
+          created_by: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          values?: Record<string, any>
+          created_by?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      project_members: {
+        Row: {
+          id: string
+          project_id: string
+          user_id: string
+          role: 'owner' | 'editor' | 'viewer'
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          user_id: string
+          role: 'owner' | 'editor' | 'viewer'
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          user_id?: string
+          role?: 'owner' | 'editor' | 'viewer'
           created_at?: string
           updated_at?: string
         }

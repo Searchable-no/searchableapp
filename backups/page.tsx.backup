@@ -398,9 +398,7 @@ export default function NormalSearchPage() {
 
     setIsLoading(true);
     setError(null);
-    if (query.trim()) {
-      saveRecentSearch(query);
-    }
+    saveRecentSearch(query);
 
     setProgressiveLoadingPercent(0);
 
@@ -574,7 +572,7 @@ export default function NormalSearchPage() {
     return () => {
       debouncedSearch.cancel();
     };
-  }, [debouncedSearch]);
+  }, [query, debouncedSearch, selectedFileTypes, lastModified, selectedCreator, selectedWorkspace, selectedSiteId]);
 
   function debounce<T extends (...args: unknown[]) => unknown>(
     func: T,
@@ -613,73 +611,74 @@ export default function NormalSearchPage() {
         fileTypes: selectedFileTypes
       });
       
-      // Split into content types and file extensions
-      const selectedContentTypes = selectedFileTypes.filter((type) =>
-        fileTypes.find((ft) => ft.value === type && ft.isContentType)
-      );
-      const selectedExtensions = selectedFileTypes.filter((type) =>
-        fileTypes.find((ft) => ft.value === type && !ft.isContentType)
-      );
+      // Filter by content types and file extensions
+      if (selectedFileTypes.length > 0) {
+        // Split into content types and file extensions
+        const selectedContentTypes = selectedFileTypes.filter((type) =>
+          fileTypes.find((ft) => ft.value === type && ft.isContentType)
+        );
+        const selectedExtensions = selectedFileTypes.filter((type) =>
+          fileTypes.find((ft) => ft.value === type && !ft.isContentType)
+        );
 
-      // Log what we're filtering by
-      console.log("Filtering by:", {
-        contentTypes: selectedContentTypes,
-        extensions: selectedExtensions,
-        resultType: result.type
-      });
-
-      // If we have content types selected, check for content type matches
-      if (selectedContentTypes.length > 0) {
-        const contentTypeMatch = selectedContentTypes.some((type) => {
-          switch (type) {
-            case "email":
-              return result.type === "email";
-            case "teams":
-              return result.type === "chat" || result.type === "channel";
-            case "planner":
-              return result.type === "planner";
-            default:
-              return false;
-          }
+        // Log what we're filtering by
+        console.log("Filtering by:", {
+          contentTypes: selectedContentTypes,
+          extensions: selectedExtensions,
+          resultType: result.type
         });
 
-        // If we have content types selected and this result doesn't match any,
-        // only filter it out if it's not a file (files are handled by extension)
-        if (!contentTypeMatch && (result.type !== "file" && result.type !== "folder")) {
-          return false;
-        }
-      }
+        // If we have content types selected, check for content type matches
+        if (selectedContentTypes.length > 0) {
+          const contentTypeMatch = selectedContentTypes.some((type) => {
+            switch (type) {
+              case "email":
+                return result.type === "email";
+              case "teams":
+                return result.type === "chat" || result.type === "channel";
+              case "planner":
+                return result.type === "planner";
+              default:
+                return false;
+            }
+          });
 
-      // If we have file extensions selected and this is a file, check extension match
-      if (selectedExtensions.length > 0 && result.type === "file") {
-        const fileName = result.name || '';
-        const lastDotIndex = fileName.lastIndexOf('.');
-        
-        // If no extension found, filter out the file
-        if (lastDotIndex === -1) {
-          console.log(`Filtering out ${fileName} - no extension`);
-          return false;
+          // If we have content types selected and this result doesn't match any,
+          // only filter it out if it's not a file (files are handled by extension)
+          if (!contentTypeMatch && (result.type !== "file" && result.type !== "folder")) {
+            return false;
+          }
+        }
+
+        // If we have file extensions selected and this is a file, check extension match
+        if (selectedExtensions.length > 0 && result.type === "file") {
+          const fileName = result.name || '';
+          const lastDotIndex = fileName.lastIndexOf('.');
+          
+          // If no extension found, filter out the file
+          if (lastDotIndex === -1) {
+            console.log(`Filtering out ${fileName} - no extension`);
+            return false;
+          }
+          
+          const extension = fileName.substring(lastDotIndex + 1).toLowerCase();
+          console.log(`File ${fileName} has extension: ${extension}`);
+          
+          // Check if the extension is in our selected extensions
+          const extensionMatch = selectedExtensions.includes(extension);
+          if (!extensionMatch) {
+            console.log(`Filtering out ${fileName} - extension ${extension} not in selected list: ${selectedExtensions.join(', ')}`);
+            return false;
+          }
         }
         
-        const extension = fileName.substring(lastDotIndex + 1).toLowerCase();
-        console.log(`File ${fileName} has extension: ${extension}, looking for: ${selectedExtensions.join(', ')}`);
-        
-        // Check if the extension is in our selected extensions
-        const extensionMatch = selectedExtensions.includes(extension);
-        if (!extensionMatch) {
-          console.log(`Filtering out ${fileName} - extension ${extension} not in selected list: ${selectedExtensions.join(', ')}`);
+        // If we have only file extensions selected (no content types), 
+        // exclude non-file results
+        if (selectedExtensions.length > 0 && selectedContentTypes.length === 0 && 
+            result.type !== "file" && result.type !== "folder") {
+          console.log(`Filtering out ${result.name} - not a file/folder`);
           return false;
-        } else {
-          console.log(`MATCH: Keeping ${fileName} with extension ${extension}`);
         }
-      }
-      
-      // If we have only file extensions selected (no content types), 
-      // exclude non-file results
-      if (selectedExtensions.length > 0 && selectedContentTypes.length === 0 && 
-          result.type !== "file") {
-        console.log(`Filtering out ${result.name} - not a file`);
-        return false;
       }
 
       // Filter by last modified date
@@ -725,7 +724,7 @@ export default function NormalSearchPage() {
         - Selected time range: ${lastModified}
         - Selected creator: ${selectedCreator}`
       );
-
+      
       filtered = [...filtered].sort((a, b) => {
         // Sort by name
         if (sortBy === "name") {
@@ -748,7 +747,7 @@ export default function NormalSearchPage() {
     }
 
     return filtered;
-  }, [results, selectedFileTypes, lastModified, sortBy]);
+  }, [results, selectedFileTypes, lastModified, selectedCreator, sortBy]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -777,11 +776,6 @@ export default function NormalSearchPage() {
       }
     };
   }, [searchTimerId]);
-
-  useEffect(() => {
-    console.log("Selected file types changed:", selectedFileTypes);
-    console.log("Active filter count:", activeFilterCount);
-  }, [selectedFileTypes, activeFilterCount]);
 
   return (
     <div className="container mx-auto py-6 px-4 space-y-6 max-w-6xl">
@@ -981,23 +975,11 @@ export default function NormalSearchPage() {
                                 key={type.value}
                                 checked={selectedFileTypes.includes(type.value)}
                                 onCheckedChange={(checked) => {
-                                  console.log(`${checked ? 'Adding' : 'Removing'} file type filter:`, type.value, 
-                                    `isContentType: ${type.isContentType}`, 
-                                    `label: ${type.label}`);
-                                  
-                                  setSelectedFileTypes((prev) => {
-                                    const newTypes = checked
+                                  setSelectedFileTypes((prev) =>
+                                    checked
                                       ? [...prev, type.value]
-                                      : prev.filter((t) => t !== type.value);
-                                      
-                                    // Schedule a search with the new filters
-                                    setTimeout(() => {
-                                      console.log("Auto-searching after file type change:", newTypes);
-                                      handleSearch();
-                                    }, 100);
-                                      
-                                    return newTypes;
-                                  });
+                                      : prev.filter((t) => t !== type.value)
+                                  );
                                 }}
                                 className="gap-2 rounded-md data-[state=checked]:bg-primary/10 p-2"
                               >
@@ -1173,15 +1155,7 @@ export default function NormalSearchPage() {
               </DropdownMenu>
 
               <Button
-                onClick={() => {
-                  console.log("Search button clicked with:", {
-                    query,
-                    fileTypes: selectedFileTypes,
-                    activeFilters: activeFilterCount > 0,
-                    searchMode: activeFilterCount > 0 && !query.trim() ? "Filter mode" : "Search mode"
-                  });
-                  handleSearch();
-                }}
+                onClick={handleSearch}
                 className="h-14 px-5 gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm rounded-lg"
               >
                 <Search className="h-5 w-5" />
@@ -1307,18 +1281,13 @@ export default function NormalSearchPage() {
           )}
         </div>
 
-        {/* Show results if there's a query OR if we have filtered results to show */}
-        {(query || filteredResults.length > 0) && (
+        {query && (
           <div className="mt-2 animate-in fade-in duration-300">
             {isLoading && !initialResultsLoaded ? (
               <div className="flex flex-col items-center justify-center py-16">
                 <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin mb-4" />
                 <p className="text-muted-foreground mb-1">
-                  {query.trim() ? (
-                    <>Searching for &quot;{query}&quot;...</>
-                  ) : (
-                    <>Finding files matching your filters...</>
-                  )}
+                  Searching for &quot;{query}&quot;...
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {progressiveLoadingPercent < 30
@@ -1350,30 +1319,22 @@ export default function NormalSearchPage() {
                 </div>
                 <h3 className="text-xl font-medium mb-2">No results found</h3>
                 <p className="text-muted-foreground max-w-md mx-auto mb-6">
-                  {query.trim() ? (
+                  We couldn&apos;t find anything matching &quot;{query}&quot;.
+                  {suggestedQuery && (
                     <>
-                      We couldn&apos;t find anything matching &quot;{query}&quot;.
-                      {suggestedQuery && (
-                        <>
-                          <br />
-                          Did you mean:{" "}
-                          <Button
-                            variant="link"
-                            className="text-primary font-medium px-1 py-0 h-auto"
-                            onClick={() => {
-                              setQuery(suggestedQuery);
-                              handleSearch();
-                            }}
-                          >
-                            {suggestedQuery}
-                          </Button>
-                          ?
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      We couldn&apos;t find any files matching the selected filters.
+                      <br />
+                      Did you mean:{" "}
+                      <Button
+                        variant="link"
+                        className="text-primary font-medium px-1 py-0 h-auto"
+                        onClick={() => {
+                          setQuery(suggestedQuery);
+                          handleSearch();
+                        }}
+                      >
+                        {suggestedQuery}
+                      </Button>
+                      ?
                     </>
                   )}
                 </p>
@@ -1414,14 +1375,6 @@ export default function NormalSearchPage() {
                     </div>
                   )}
                 
-                {/* Show when filters are active but no query */}
-                {!query.trim() && selectedFileTypes.length > 0 && filteredResults.length > 0 && (
-                  <div className="bg-primary/5 text-primary text-sm p-2 rounded-md mb-4 flex items-center">
-                    <Filter className="h-4 w-4 mr-2" />
-                    Showing {filteredResults.length} results matching your filter{selectedFileTypes.length > 1 ? 's' : ''}
-                  </div>
-                )}
-                
                 {suggestedQuery && (
                   <div className="bg-muted/50 text-sm p-3 rounded-md mb-4 flex items-start gap-2">
                     <Search className="h-4 w-4 mt-0.5 text-muted-foreground" />
@@ -1444,22 +1397,6 @@ export default function NormalSearchPage() {
                   </div>
                 )}
                 
-                {/* Debug information */}
-                <div style={{ display: 'none' }}>
-                  {(() => {
-                    console.log("Rendering SearchResults with:", {
-                      originalResultsCount: results.length,
-                      filteredResultsCount: filteredResults.length,
-                      activeFilters: {
-                        fileTypes: selectedFileTypes,
-                        lastModified,
-                        creator: selectedCreator
-                      }
-                    });
-                    return null;
-                  })()}
-                </div>
-                
                 <SearchResults
                   results={filteredResults}
                   isLoading={false}
@@ -1470,7 +1407,7 @@ export default function NormalSearchPage() {
           </div>
         )}
 
-        {!query && !isLoading && results.length === 0 && filteredResults.length === 0 && (
+        {!query && !isLoading && results.length === 0 && (
           <div className="text-center pt-8 pb-12">
             <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-primary/10 text-primary mb-6">
               <Search className="w-10 h-10" />
@@ -1507,4 +1444,3 @@ export default function NormalSearchPage() {
     </div>
   );
 }
-

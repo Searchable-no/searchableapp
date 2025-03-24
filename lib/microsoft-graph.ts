@@ -102,6 +102,19 @@ export interface PlannerTask {
   webUrl?: string
   description?: string
   priority?: number
+  score?: number
+  name?: string
+  lastModifiedDateTime?: string
+  createdBy?: {
+    user?: {
+      displayName?: string;
+    };
+  };
+  lastModifiedBy?: {
+    user?: {
+      displayName?: string;
+    };
+  };
 }
 
 export interface Team {
@@ -1291,12 +1304,41 @@ export async function searchSharePointFiles(
   userId: string, 
   query: string,
   siteId?: string,
-  contentTypes?: ('file' | 'folder' | 'email' | 'chat' | 'channel' | 'planner')[]
+  contentTypes?: ('file' | 'folder' | 'email' | 'chat' | 'channel' | 'planner')[],
+  fileExtensions?: string[]
 ): Promise<SearchResult[]> {
   try {
     const accessToken = await getValidAccessToken(userId);
     const graphClient = await getGraphClient(accessToken);
     const results: SearchResult[] = [];
+
+    // Build search query string with file extension filters if provided
+    let searchQuery = query.trim() ? `"${query}"` : "";
+    
+    // Add filename queries if there's a query
+    if (query.trim()) {
+      searchQuery += ` OR filename:"${query}" OR filename~:"${query}"`;
+    }
+    
+    // Add fileextension filters if specified
+    if (fileExtensions && fileExtensions.length > 0) {
+      // Create extension filter (e.g., filetype:docx OR filetype:pdf)
+      const extensionFilters = fileExtensions.map(ext => `filetype:${ext}`).join(' OR ');
+      
+      // If there's a query, combine with extensions
+      if (query.trim()) {
+        searchQuery = `(${searchQuery}) AND (${extensionFilters})`;
+      } else {
+        // If no query and we're just filtering by file type, use a broader search
+        // This will find all files of the specified type(s)
+        searchQuery = extensionFilters;
+      }
+    } else if (!query.trim()) {
+      // If no query and no file extensions, use a wildcard to find all items
+      searchQuery = "*";
+    }
+    
+    console.log("Search query string:", searchQuery);
 
     // Search for files and folders
     const fileSearchResponse = await graphClient
@@ -1305,7 +1347,7 @@ export async function searchSharePointFiles(
         requests: [{
           entityTypes: ['driveItem'],
           query: {
-            queryString: `${query} OR filename:${query} OR filetype:${query} OR title:${query} OR tags:${query} OR content:${query}`,
+            queryString: searchQuery,
           },
           fields: [
             'id',
@@ -1315,13 +1357,14 @@ export async function searchSharePointFiles(
             'size',
             'createdBy',
             'lastModifiedBy',
-            'parentReference',
-            'content',
-            'title',
-            'metadata'
+            'parentReference'
           ],
           from: 0,
           size: 25,
+          queryAlterationOptions: {
+            enableSpellCheck: true,
+            enableModification: true
+          },
           ...(siteId && {
             queryContext: {
               siteId: siteId
@@ -1334,6 +1377,95 @@ export async function searchSharePointFiles(
       const fileResults = fileSearchResponse.value[0].hitsContainers[0].hits
         .map((hit: any) => {
           const resource = hit.resource || {};
+          const hitScore = hit.hitScore || 0;
+          
+          // Log raw results for debugging
+          console.log("Raw search result:", {
+            name: resource.name,
+            id: resource.id,
+            hitScore,
+            url: resource.webUrl,
+            resourceType: resource.folder ? 'folder' : 'file'
+          });
+          
+          // Calculate relevance score
+          let score = hitScore;
+          const name = resource.name?.toLowerCase() || '';
+          const lowerQuery = query.toLowerCase();
+          
+          // Check for file extension match if fileExtensions is provided
+          if (fileExtensions && fileExtensions.length > 0) {
+            const fileExtension = name.split('.').pop()?.toLowerCase();
+            if (fileExtensions.length > 0 && fileExtensions.includes(fileExtension)) {
+              // Boost score for explicitly requested file types
+              score += 150;
+            }
+          }
+          
+          // Helper function to calculate string similarity (Levenshtein distance)
+          const similarity = (s1: string, s2: string): number => {
+            if (s1 === s2) return 1.0;
+            
+            // Convert to lowercase for case-insensitive comparison
+            s1 = s1.toLowerCase();
+            s2 = s2.toLowerCase();
+            
+            // If either string is empty, the distance is the length of the other string
+            if (s1.length === 0) return 0;
+            if (s2.length === 0) return 0;
+            
+            // Calculate Levenshtein distance as a percentage similarity
+            const maxLength = Math.max(s1.length, s2.length);
+            let distance = 0;
+            
+            // Simplified algorithm for small strings - count character differences
+            for (let i = 0; i < maxLength; i++) {
+              if (i >= s1.length || i >= s2.length || s1[i] !== s2[i]) {
+                distance++;
+              }
+            }
+            
+            return 1 - (distance / maxLength);
+          };
+          
+          // Boost score based on exact matches
+          if (name === lowerQuery) {
+            // Perfect match - highest priority
+            score += 200;
+          } else if (name.startsWith(lowerQuery + '.')) {
+            // Filename starts with query followed by extension
+            score += 150;
+          } else if (name.includes('.' + lowerQuery)) {
+            // Query is the file extension
+            score += 100;
+          } else if (name.startsWith(lowerQuery)) {
+            // Filename starts with query
+            score += 80;
+          } else if (name.includes(lowerQuery)) {
+            // Query is somewhere in the filename
+            score += 50;
+          } else {
+            // Check for similar matches (fuzzy matching)
+            const nameParts = name.split(/[^a-z0-9]+/); // Split by non-alphanumeric chars
+            for (const part of nameParts) {
+              if (part.length > 2) { // Only check substantial words
+                const sim = similarity(part, lowerQuery);
+                if (sim > 0.8) { // High similarity (80%+)
+                  score += 40 + (sim * 30); // 40-70 points based on similarity
+                  break;
+                } else if (sim > 0.6) { // Medium similarity (60%+)
+                  score += 20 + (sim * 20); // 20-40 points
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Additional boost for smaller files (likely more relevant documents rather than large data files)
+          if (resource.size && resource.size < 5 * 1024 * 1024) { // < 5MB
+            score += 10;
+          }
+          
           return {
             id: resource.id,
             name: resource.name || 'Untitled',
@@ -1341,6 +1473,7 @@ export async function searchSharePointFiles(
             lastModifiedDateTime: resource.lastModifiedDateTime,
             size: resource.size || 0,
             type: resource.folder ? 'folder' as const : 'file' as const,
+            score,
             createdBy: {
               user: {
                 displayName: resource.createdBy?.user?.displayName || resource.createdBy?.email || 'Unknown'
@@ -1357,7 +1490,7 @@ export async function searchSharePointFiles(
 
       // If siteId is provided, only include results from that site
       results.push(...(siteId 
-        ? fileResults.filter(result => result.siteId === siteId)
+        ? fileResults.filter((result: { siteId?: string }) => result.siteId === siteId)
         : fileResults));
     }
 
@@ -1517,10 +1650,17 @@ export async function searchSharePointFiles(
       }
     }
 
-    // Sort all results by lastModifiedDateTime
-    return results.sort((a, b) => 
-      new Date(b.lastModifiedDateTime).getTime() - new Date(a.lastModifiedDateTime).getTime()
-    );
+    // Sort all results by score first, then by lastModifiedDateTime
+    return results.sort((a, b) => {
+      // First compare by score if available
+      if (a.score !== undefined && b.score !== undefined) {
+        const scoreDiff = b.score - a.score;
+        if (scoreDiff !== 0) return scoreDiff;
+      }
+      
+      // Then by lastModifiedDateTime as a tiebreaker
+      return new Date(b.lastModifiedDateTime).getTime() - new Date(a.lastModifiedDateTime).getTime();
+    });
 
   } catch (error) {
     console.error('Error searching Microsoft content:', error);
@@ -1648,8 +1788,8 @@ export async function searchPlannerTasks(
               .api(`/planner/plans/${plan.id}/buckets`)
               .get();
             
-            // Create a map of bucket IDs to names for easier lookup
-            const bucketMap = {};
+            // Create a map of bucket IDs to names
+            const bucketMap: { [key: string]: string } = {};
             for (const bucket of bucketsResponse.value) {
               bucketMap[bucket.id] = bucket.name;
             }

@@ -18,9 +18,8 @@ import { revalidatePath } from 'next/cache'
 import { TileType } from '@/lib/database.types'
 
 // Helper function to get data for specific tile types
-export async function getData(tileTypes?: TileType[]) {
-  console.log(`getData called with tileTypes: ${tileTypes?.join(', ') || 'all'}`);
-  
+export async function getData(tileTypes?: TileType[], forceRefresh: boolean = false) {
+  console.log(`getData called with tileTypes: ${tileTypes?.join(', ') || 'all'}, forceRefresh: ${forceRefresh}`);
   const start = Date.now();
   const supabase = createServerComponentClient({ cookies })
   const { data: { user }, error } = await supabase.auth.getUser()
@@ -113,12 +112,23 @@ export async function getData(tileTypes?: TileType[]) {
     // Log what we're fetching
     console.log(`Fetching dashboard data for tiles: ${tilesToFetch.join(', ')}`);
     
-    // Fetch data for each requested tile type in parallel
-    const fetchPromises = tilesToFetch.map(async (tileType) => {
+    // Add retry and timeout capabilities
+    const fetchWithTimeout = async (tileType: TileType): Promise<any> => {
       try {
         console.log(`Starting fetch for ${tileType}`);
         const tileStart = Date.now();
-        const tileData = await fetchFunctions[tileType]();
+        
+        // Create a promise that rejects after 15 seconds
+        const timeout = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`Fetch for ${tileType} timed out`)), 15000);
+        });
+        
+        // Race the fetch against the timeout
+        const tileData = await Promise.race([
+          fetchFunctions[tileType](),
+          timeout
+        ]) as any;
+        
         const tileEnd = Date.now();
         console.log(`Completed fetch for ${tileType} in ${tileEnd - tileStart}ms`);
         return tileData;
@@ -126,7 +136,10 @@ export async function getData(tileTypes?: TileType[]) {
         console.error(`Error fetching data for ${tileType}:`, error);
         return {} // Return empty object for this tile if fetch fails
       }
-    })
+    };
+    
+    // Fetch data for each requested tile type in parallel
+    const fetchPromises = tilesToFetch.map(tileType => fetchWithTimeout(tileType));
     
     const results = await Promise.all(fetchPromises);
     

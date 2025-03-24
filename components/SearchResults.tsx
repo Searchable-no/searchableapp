@@ -68,8 +68,21 @@ function getSource(result: SharePointSearchResult): string {
 }
 
 // Helper function to format the type display
-function formatType(type: string): string {
-  switch (type.toLowerCase()) {
+function formatType(result: CombinedSearchResult): string {
+  // Type guard to check if result is SharePointSearchResult with name property
+  const isSharePointResult = (obj: any): obj is SharePointSearchResult => {
+    return 'name' in obj && typeof obj.name === 'string';
+  };
+
+  console.log("Formatting type for result:", {
+    type: result.type,
+    name: isSharePointResult(result) ? result.name : (result as any).title || '',
+    extension: result.type === "file" && isSharePointResult(result) ? result.name.split(".").pop() : null
+  });
+
+  const type = result.type.toLowerCase();
+  
+  switch (type) {
     case "email":
       return "Email";
     case "chat":
@@ -77,11 +90,45 @@ function formatType(type: string): string {
     case "channel":
       return "Teams Channel";
     case "planner":
-    case "PLANNER":
       return "Task";
     case "folder":
       return "Folder";
     case "file":
+      // Make sure we're dealing with a SharePoint result that has a name property
+      if (isSharePointResult(result)) {
+        // Get file extension for display
+        const fileName = result.name;
+        const lastDotIndex = fileName.lastIndexOf('.');
+        if (lastDotIndex === -1) return "Document";
+        
+        const extension = fileName.substring(lastDotIndex + 1).toLowerCase();
+        switch (extension) {
+          case "docx":
+          case "doc":
+            return "Word Document";
+          case "xlsx":
+          case "xls":
+            return "Excel Spreadsheet";
+          case "pptx":
+          case "ppt":
+            return "PowerPoint";
+          case "pdf":
+            return "PDF Document";
+          case "txt":
+            return "Text File";
+          case "jpg":
+          case "jpeg":
+          case "png":
+          case "gif":
+            return "Image";
+          case "zip":
+          case "rar":
+          case "7z":
+            return "Archive";
+          default:
+            return `File (${extension || 'unknown'})`;
+        }
+      }
       return "Document";
     default:
       // If it's not a special type, return the original type in uppercase
@@ -94,6 +141,7 @@ export interface SharePointSearchResult {
   name: string;
   type: string;
   size: number;
+  score?: number;
   createdBy?: {
     user?: {
       displayName?: string;
@@ -258,34 +306,36 @@ export function SearchResults({
       return;
     }
 
-    // Handle SharePoint files as before
-    setSelectedFile(result as SharePointSearchResult);
+    // Cast to SharePointSearchResult for file operations
+    const fileResult = result as SharePointSearchResult;
+    setSelectedFile(fileResult);
+    
     try {
       // Determine the driveId
-      let driveId = result.driveId;
+      let driveId = fileResult.driveId;
 
       // If no driveId is provided directly, try to extract it from the file ID
-      if (!driveId && result.id) {
-        if (result.id.includes("!")) {
-          [driveId] = result.id.split("!");
-        } else if (result.id.includes(",")) {
-          [driveId] = result.id.split(",");
+      if (!driveId && fileResult.id) {
+        if (fileResult.id.includes("!")) {
+          [driveId] = fileResult.id.split("!");
+        } else if (fileResult.id.includes(",")) {
+          [driveId] = fileResult.id.split(",");
         }
       }
 
       // If we still don't have a driveId and it's a SharePoint file, use the default Documents library ID
-      if (!driveId && result.webUrl?.includes("sharepoint.com")) {
+      if (!driveId && fileResult.webUrl?.includes("sharepoint.com")) {
         driveId = "b!6ouVabiacEOJOIH3ZtBNuQxkdvT6fHlLgWYCa3Nzj0o";
       }
 
-      if (!driveId || !result.id) {
-        console.error("No driveId or fileId available for file:", result);
+      if (!driveId || !fileResult.id) {
+        console.error("No driveId or fileId available for file:", fileResult);
         return;
       }
 
       const response = await fetch(
         `/api/preview?fileId=${encodeURIComponent(
-          result.id
+          fileResult.id
         )}&driveId=${encodeURIComponent(driveId)}`
       );
 
@@ -302,8 +352,8 @@ export function SearchResults({
     } catch (error) {
       console.error("Failed to get preview URL:", error);
       // Fallback to webUrl if preview fails
-      if (result.webUrl) {
-        setPreviewUrl(result.webUrl);
+      if (fileResult.webUrl) {
+        setPreviewUrl(fileResult.webUrl);
       }
     }
   };
@@ -341,12 +391,13 @@ export function SearchResults({
     <>
       <Card>
         {/* Header */}
-        <div className="grid grid-cols-6 gap-4 p-4 font-medium text-sm bg-muted">
+        <div className="grid grid-cols-7 gap-4 p-4 font-medium text-sm bg-muted">
           <div className="col-span-2">Name</div>
           <div>Type</div>
           <div>Created By</div>
           <div>Modified By</div>
           <div>Source</div>
+          <div>Relevance</div>
         </div>
 
         {/* Results */}
@@ -354,14 +405,16 @@ export function SearchResults({
           {currentResults.map((result) => (
             <div
               key={result.id}
-              className="grid grid-cols-6 gap-4 p-4 hover:bg-muted/50 cursor-pointer items-center"
+              className="grid grid-cols-7 gap-4 p-4 hover:bg-muted/50 cursor-pointer items-center"
               onClick={() => handleFileSelect(result)}
             >
               <div className="col-span-2 flex items-center gap-2">
                 {getResultIcon(result)}
-                <span className="truncate">{result.name}</span>
+                <span className="truncate">
+                  {result.type === 'planner' && 'title' in result ? result.title : result.name}
+                </span>
               </div>
-              <div className="truncate">{formatType(result.type)}</div>
+              <div className="truncate">{formatType(result)}</div>
               <div className="truncate">
                 {result.createdBy?.user?.displayName || "System"}
               </div>
@@ -370,6 +423,18 @@ export function SearchResults({
               </div>
               <div className="truncate">
                 {getSource(result as SharePointSearchResult)}
+              </div>
+              <div>
+                {result.score !== undefined && (
+                  <div className="relative w-16 h-2 bg-muted rounded-full overflow-hidden">
+                    <div 
+                      className="absolute top-0 left-0 h-full bg-primary rounded-full"
+                      style={{ 
+                        width: `${result.score > 180 ? 100 : result.score > 120 ? 85 : result.score > 70 ? 65 : result.score > 30 ? 45 : 25}%`,
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -464,7 +529,7 @@ export function SearchResults({
                     <div>
                       <dt className="text-muted-foreground">Type</dt>
                       <dd className="font-medium">
-                        {selectedFile && formatType(selectedFile.type)}
+                        {selectedFile && formatType(selectedFile)}
                       </dd>
                     </div>
                     <div>
