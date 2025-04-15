@@ -15,18 +15,19 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Searchable",
   description: "A search-enabled dashboard for your workspace",
-  manifest: '/manifest.json',
-  themeColor: '#000000',
+  manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'default',
-    title: 'Searchable',
+    statusBarStyle: "default",
+    title: "Searchable",
   },
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 1,
-  },
+};
+
+export const viewport = {
+  themeColor: "#000000",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default async function RootLayout({
@@ -46,14 +47,12 @@ export default async function RootLayout({
         <ThemeProvider
           attribute="class"
           defaultTheme="light"
-          enableSystem
+          enableSystem={false}
           disableTransitionOnChange
         >
           <div className="flex min-h-screen">
             {session && <AppSidebar />}
-            <div className="flex-1 overflow-auto">
-              {children}
-            </div>
+            <div className="flex-1 overflow-auto">{children}</div>
           </div>
           <Toaster />
         </ThemeProvider>

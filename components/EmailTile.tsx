@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mail, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EmailMessage } from "@/lib/microsoft-graph";
 import { EmailDialog } from "@/components/EmailDialog";
 import { formatDistanceToNow } from "@/lib/utils";
@@ -15,6 +15,8 @@ interface EmailTileProps {
   isLoading?: boolean;
   refreshInterval?: number;
   isCachedData?: boolean;
+  onEmailClick?: (email: EmailMessage) => void;
+  onRefresh?: () => Promise<boolean>;
 }
 
 export function EmailTile({
@@ -22,21 +24,63 @@ export function EmailTile({
   isLoading,
   refreshInterval = 300000,
   isCachedData = false,
+  onEmailClick,
+  onRefresh,
 }: EmailTileProps) {
   const [emails, setEmails] = useState<EmailMessage[]>(initialEmails);
   const [showAll, setShowAll] = useState(false);
   const displayEmails = showAll ? emails : emails.slice(0, 5);
 
+  // Update emails when initialEmails change
+  useEffect(() => {
+    setEmails(initialEmails);
+  }, [initialEmails]);
+
   const { isRefreshing, lastRefreshed, refresh } = useAutoRefresh({
     refreshInterval,
     onRefresh: async () => {
       try {
+        // If custom refresh handler is provided, use it
+        if (onRefresh) {
+          const success = await onRefresh();
+          if (success) {
+            return;
+          }
+          // If the custom refresh fails, fall back to the default behavior
+        }
+
         const response = await fetch("/api/emails/recent");
-        if (!response.ok) throw new Error("Failed to fetch emails");
+
+        // Check if the response is OK before trying to parse JSON
+        if (!response.ok) {
+          console.error(
+            `Error response from server: ${response.status} ${response.statusText}`
+          );
+          // Try to read the error as JSON if possible
+          try {
+            const errorData = await response.json();
+            console.error("Error details:", errorData);
+          } catch (jsonError) {
+            console.error("Could not parse error response as JSON");
+          }
+          throw new Error(
+            `Failed to fetch emails: ${response.status} ${response.statusText}`
+          );
+        }
+
+        // Now try to parse the JSON response
         const data = await response.json();
-        setEmails(data.emails);
+
+        // Validate the response structure
+        if (!data || !Array.isArray(data.emails)) {
+          console.error("Invalid response format:", data);
+          throw new Error("Invalid response format from server");
+        }
+
+        setEmails(data.emails || []);
       } catch (error) {
         console.error("Error refreshing emails:", error);
+        // Don't update the emails state on error to preserve the existing data
       }
     },
   });
@@ -66,24 +110,32 @@ export function EmailTile({
   }
 
   return (
-    <Card className={cn(
-      "h-full bg-gradient-to-br from-background to-muted/50 flex flex-col",
-      isCachedData && "border-dashed"
-    )}>
-      <CardHeader className={cn(
-        "py-1.5 px-2.5 border-b flex-none",
-        isCachedData && "bg-muted/20"
-      )}>
+    <Card
+      className={cn(
+        "h-full bg-gradient-to-br from-background to-muted/50 flex flex-col",
+        isCachedData && "border-dashed"
+      )}
+    >
+      <CardHeader
+        className={cn(
+          "py-1.5 px-2.5 border-b flex-none",
+          isCachedData && "bg-muted/20"
+        )}
+      >
         <CardTitle className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5">
-            <div className={cn(
-              "p-1 rounded-md bg-primary/10",
-              isCachedData && "bg-muted/30"
-            )}>
-              <Mail className={cn(
-                "h-3 w-3 text-primary",
-                isCachedData && "text-muted-foreground"
-              )} />
+            <div
+              className={cn(
+                "p-1 rounded-md bg-primary/10",
+                isCachedData && "bg-muted/30"
+              )}
+            >
+              <Mail
+                className={cn(
+                  "h-3 w-3 text-primary",
+                  isCachedData && "text-muted-foreground"
+                )}
+              />
             </div>
             <span>Recent Emails</span>
             {isCachedData && (
@@ -136,6 +188,7 @@ export function EmailTile({
                     !email.isRead && "bg-primary/5 hover:bg-primary/10",
                     isCachedData && "opacity-90"
                   )}
+                  onClick={() => onEmailClick?.(email)}
                 >
                   <div className="flex items-start justify-between gap-1.5">
                     <div className="flex-1 min-w-0">
@@ -161,6 +214,34 @@ export function EmailTile({
                         {formatDistanceToNow(new Date(email.receivedDateTime))}
                       </p>
                     </div>
+
+                    <button
+                      className="text-xs text-primary hover:bg-primary/10 px-2 py-1 rounded"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+
+                        // Save email to localStorage for the chat to use
+                        try {
+                          const emailKey = `email_${email.id}`;
+                          localStorage.setItem(emailKey, JSON.stringify(email));
+
+                          // Open the chat page with the email ID
+                          window.open(
+                            `/ai-services/email/chat?id=${
+                              email.id
+                            }&subject=${encodeURIComponent(
+                              email.subject || "Email"
+                            )}`,
+                            "_blank"
+                          );
+                        } catch (err) {
+                          console.error("Failed to save email for chat:", err);
+                        }
+                      }}
+                    >
+                      AI Chat
+                    </button>
                   </div>
                 </div>
               </EmailDialog>

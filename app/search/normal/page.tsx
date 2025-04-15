@@ -367,14 +367,15 @@ export default function NormalSearchPage() {
 
   const handleSearch = useCallback(async () => {
     if (!session?.user?.id) return;
-    
+
     // Only require query if no filters are active
-    const hasActiveFilters = selectedFileTypes.length > 0 || 
-                             lastModified !== "all" || 
-                             selectedCreator !== "all" ||
-                             selectedWorkspace !== "all" || 
-                             selectedSiteId !== "all";
-                             
+    const hasActiveFilters =
+      selectedFileTypes.length > 0 ||
+      lastModified !== "all" ||
+      selectedCreator !== "all" ||
+      selectedWorkspace !== "all" ||
+      selectedSiteId !== "all";
+
     if (!query.trim() && !hasActiveFilters) return;
 
     const cacheKey = createCacheKey();
@@ -471,7 +472,13 @@ export default function NormalSearchPage() {
           const response = await fetch(
             `/api/search/with-workspace?query=${encodeURIComponent(
               query
-            )}&workspace=${encodeURIComponent(selectedWorkspace)}`
+            )}&workspace=${encodeURIComponent(selectedWorkspace)}${
+              selectedFileTypes.length > 0
+                ? `&contentTypes=${encodeURIComponent(
+                    selectedFileTypes.join(",")
+                  )}`
+                : ""
+            }`
           );
 
           if (!response.ok) {
@@ -520,7 +527,7 @@ export default function NormalSearchPage() {
             results: searchResults,
             timestamp: Date.now(),
             refreshing: false,
-            suggestedQuery: suggestion
+            suggestedQuery: suggestion,
           },
         }));
 
@@ -547,26 +554,36 @@ export default function NormalSearchPage() {
 
   const debouncedSearch = useCallback(
     debounce(() => {
-      const hasActiveFilters = selectedFileTypes.length > 0 || 
-                               lastModified !== "all" || 
-                               selectedCreator !== "all" ||
-                               selectedWorkspace !== "all" || 
-                               selectedSiteId !== "all";
-                               
+      const hasActiveFilters =
+        selectedFileTypes.length > 0 ||
+        lastModified !== "all" ||
+        selectedCreator !== "all" ||
+        selectedWorkspace !== "all" ||
+        selectedSiteId !== "all";
+
       if (query.trim().length >= 3 || hasActiveFilters) {
         handleSearch();
       }
     }, 800),
-    [handleSearch, selectedFileTypes, lastModified, selectedCreator, selectedWorkspace, selectedSiteId, query]
+    [
+      handleSearch,
+      selectedFileTypes,
+      lastModified,
+      selectedCreator,
+      selectedWorkspace,
+      selectedSiteId,
+      query,
+    ]
   );
 
   useEffect(() => {
-    const hasActiveFilters = selectedFileTypes.length > 0 || 
-                             lastModified !== "all" || 
-                             selectedCreator !== "all" ||
-                             selectedWorkspace !== "all" || 
-                             selectedSiteId !== "all";
-                             
+    const hasActiveFilters =
+      selectedFileTypes.length > 0 ||
+      lastModified !== "all" ||
+      selectedCreator !== "all" ||
+      selectedWorkspace !== "all" ||
+      selectedSiteId !== "all";
+
     if (query.trim().length >= 3 || hasActiveFilters) {
       debouncedSearch();
     }
@@ -606,13 +623,17 @@ export default function NormalSearchPage() {
       return [];
     }
 
-    let filtered = results.filter((result) => {
-      console.log("Filtering result:", { 
-        name: result.name, 
+    // First filter: remove all planner tasks before any other filtering
+    let filtered = results.filter((result) => result.type !== "planner");
+
+    // Continue with the other filters
+    filtered = filtered.filter((result) => {
+      console.log("Filtering result:", {
+        name: result.name,
         type: result.type,
-        fileTypes: selectedFileTypes
+        fileTypes: selectedFileTypes,
       });
-      
+
       // Split into content types and file extensions
       const selectedContentTypes = selectedFileTypes.filter((type) =>
         fileTypes.find((ft) => ft.value === type && ft.isContentType)
@@ -625,7 +646,7 @@ export default function NormalSearchPage() {
       console.log("Filtering by:", {
         contentTypes: selectedContentTypes,
         extensions: selectedExtensions,
-        resultType: result.type
+        resultType: result.type,
       });
 
       // If we have content types selected, check for content type matches
@@ -645,39 +666,54 @@ export default function NormalSearchPage() {
 
         // If we have content types selected and this result doesn't match any,
         // only filter it out if it's not a file (files are handled by extension)
-        if (!contentTypeMatch && (result.type !== "file" && result.type !== "folder")) {
+        if (
+          !contentTypeMatch &&
+          result.type !== "file" &&
+          result.type !== "folder"
+        ) {
           return false;
         }
       }
 
       // If we have file extensions selected and this is a file, check extension match
       if (selectedExtensions.length > 0 && result.type === "file") {
-        const fileName = result.name || '';
-        const lastDotIndex = fileName.lastIndexOf('.');
-        
+        const fileName = result.name || "";
+        const lastDotIndex = fileName.lastIndexOf(".");
+
         // If no extension found, filter out the file
         if (lastDotIndex === -1) {
           console.log(`Filtering out ${fileName} - no extension`);
           return false;
         }
-        
+
         const extension = fileName.substring(lastDotIndex + 1).toLowerCase();
-        console.log(`File ${fileName} has extension: ${extension}, looking for: ${selectedExtensions.join(', ')}`);
-        
+        console.log(
+          `File ${fileName} has extension: ${extension}, looking for: ${selectedExtensions.join(
+            ", "
+          )}`
+        );
+
         // Check if the extension is in our selected extensions
         const extensionMatch = selectedExtensions.includes(extension);
         if (!extensionMatch) {
-          console.log(`Filtering out ${fileName} - extension ${extension} not in selected list: ${selectedExtensions.join(', ')}`);
+          console.log(
+            `Filtering out ${fileName} - extension ${extension} not in selected list: ${selectedExtensions.join(
+              ", "
+            )}`
+          );
           return false;
         } else {
           console.log(`MATCH: Keeping ${fileName} with extension ${extension}`);
         }
       }
-      
-      // If we have only file extensions selected (no content types), 
+
+      // If we have only file extensions selected (no content types),
       // exclude non-file results
-      if (selectedExtensions.length > 0 && selectedContentTypes.length === 0 && 
-          result.type !== "file") {
+      if (
+        selectedExtensions.length > 0 &&
+        selectedContentTypes.length === 0 &&
+        result.type !== "file"
+      ) {
         console.log(`Filtering out ${result.name} - not a file`);
         return false;
       }
@@ -706,8 +742,10 @@ export default function NormalSearchPage() {
       }
 
       // Filter by creator
-      if (selectedCreator !== "all" && 
-          result.createdBy?.user?.displayName !== selectedCreator) {
+      if (
+        selectedCreator !== "all" &&
+        result.createdBy?.user?.displayName !== selectedCreator
+      ) {
         return false;
       }
 
@@ -721,7 +759,7 @@ export default function NormalSearchPage() {
         `Filtering results: 
         - Original count: ${results.length}
         - Filtered count: ${filtered.length}
-        - Selected file types: ${selectedFileTypes.join(', ')}
+        - Selected file types: ${selectedFileTypes.join(", ")}
         - Selected time range: ${lastModified}
         - Selected creator: ${selectedCreator}`
       );
@@ -731,18 +769,25 @@ export default function NormalSearchPage() {
         if (sortBy === "name") {
           return a.name.localeCompare(b.name);
         }
-        
+
         // First compare by score if available and we're sorting by relevance
-        if (sortBy === "score" && a.score !== undefined && b.score !== undefined) {
+        if (
+          sortBy === "score" &&
+          a.score !== undefined &&
+          b.score !== undefined
+        ) {
           const scoreDiff = b.score - a.score;
           if (scoreDiff !== 0) return scoreDiff;
         }
-        
+
         // Then sort by date if requested or as a tiebreaker for relevance
         if (sortBy === "date" || sortBy === "score") {
-          return new Date(b.lastModifiedDateTime).getTime() - new Date(a.lastModifiedDateTime).getTime();
+          return (
+            new Date(b.lastModifiedDateTime).getTime() -
+            new Date(a.lastModifiedDateTime).getTime()
+          );
         }
-        
+
         return 0;
       });
     }
@@ -981,21 +1026,29 @@ export default function NormalSearchPage() {
                                 key={type.value}
                                 checked={selectedFileTypes.includes(type.value)}
                                 onCheckedChange={(checked) => {
-                                  console.log(`${checked ? 'Adding' : 'Removing'} file type filter:`, type.value, 
-                                    `isContentType: ${type.isContentType}`, 
-                                    `label: ${type.label}`);
-                                  
+                                  console.log(
+                                    `${
+                                      checked ? "Adding" : "Removing"
+                                    } file type filter:`,
+                                    type.value,
+                                    `isContentType: ${type.isContentType}`,
+                                    `label: ${type.label}`
+                                  );
+
                                   setSelectedFileTypes((prev) => {
                                     const newTypes = checked
                                       ? [...prev, type.value]
                                       : prev.filter((t) => t !== type.value);
-                                      
+
                                     // Schedule a search with the new filters
                                     setTimeout(() => {
-                                      console.log("Auto-searching after file type change:", newTypes);
+                                      console.log(
+                                        "Auto-searching after file type change:",
+                                        newTypes
+                                      );
                                       handleSearch();
                                     }, 100);
-                                      
+
                                     return newTypes;
                                   });
                                 }}
@@ -1059,7 +1112,11 @@ export default function NormalSearchPage() {
                         <ArrowUpDown className="h-4 w-4" />
                         <span className="text-sm">Sort By</span>
                         <div className="ml-auto px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs">
-                          {sortBy === "score" ? "Relevance" : sortBy === "date" ? "Date" : "Name"}
+                          {sortBy === "score"
+                            ? "Relevance"
+                            : sortBy === "date"
+                            ? "Date"
+                            : "Name"}
                         </div>
                       </DropdownMenuSubTrigger>
                       <DropdownMenuPortal>
@@ -1178,7 +1235,10 @@ export default function NormalSearchPage() {
                     query,
                     fileTypes: selectedFileTypes,
                     activeFilters: activeFilterCount > 0,
-                    searchMode: activeFilterCount > 0 && !query.trim() ? "Filter mode" : "Search mode"
+                    searchMode:
+                      activeFilterCount > 0 && !query.trim()
+                        ? "Filter mode"
+                        : "Search mode",
                   });
                   handleSearch();
                 }}
@@ -1186,7 +1246,9 @@ export default function NormalSearchPage() {
               >
                 <Search className="h-5 w-5" />
                 <span className="text-sm font-medium">
-                  {activeFilterCount > 0 && !query.trim() ? "Apply Filters" : "Search"}
+                  {activeFilterCount > 0 && !query.trim()
+                    ? "Apply Filters"
+                    : "Search"}
                 </span>
               </Button>
             </div>
@@ -1352,7 +1414,8 @@ export default function NormalSearchPage() {
                 <p className="text-muted-foreground max-w-md mx-auto mb-6">
                   {query.trim() ? (
                     <>
-                      We couldn&apos;t find anything matching &quot;{query}&quot;.
+                      We couldn&apos;t find anything matching &quot;{query}
+                      &quot;.
                       {suggestedQuery && (
                         <>
                           <br />
@@ -1373,7 +1436,8 @@ export default function NormalSearchPage() {
                     </>
                   ) : (
                     <>
-                      We couldn&apos;t find any files matching the selected filters.
+                      We couldn&apos;t find any files matching the selected
+                      filters.
                     </>
                   )}
                 </p>
@@ -1413,15 +1477,18 @@ export default function NormalSearchPage() {
                       Showing saved results while refreshing...
                     </div>
                   )}
-                
+
                 {/* Show when filters are active but no query */}
-                {!query.trim() && selectedFileTypes.length > 0 && filteredResults.length > 0 && (
-                  <div className="bg-primary/5 text-primary text-sm p-2 rounded-md mb-4 flex items-center">
-                    <Filter className="h-4 w-4 mr-2" />
-                    Showing {filteredResults.length} results matching your filter{selectedFileTypes.length > 1 ? 's' : ''}
-                  </div>
-                )}
-                
+                {!query.trim() &&
+                  selectedFileTypes.length > 0 &&
+                  filteredResults.length > 0 && (
+                    <div className="bg-primary/5 text-primary text-sm p-2 rounded-md mb-4 flex items-center">
+                      <Filter className="h-4 w-4 mr-2" />
+                      Showing {filteredResults.length} results matching your
+                      filter{selectedFileTypes.length > 1 ? "s" : ""}
+                    </div>
+                  )}
+
                 {suggestedQuery && (
                   <div className="bg-muted/50 text-sm p-3 rounded-md mb-4 flex items-start gap-2">
                     <Search className="h-4 w-4 mt-0.5 text-muted-foreground" />
@@ -1443,9 +1510,9 @@ export default function NormalSearchPage() {
                     </div>
                   </div>
                 )}
-                
+
                 {/* Debug information */}
-                <div style={{ display: 'none' }}>
+                <div style={{ display: "none" }}>
                   {(() => {
                     console.log("Rendering SearchResults with:", {
                       originalResultsCount: results.length,
@@ -1453,58 +1520,63 @@ export default function NormalSearchPage() {
                       activeFilters: {
                         fileTypes: selectedFileTypes,
                         lastModified,
-                        creator: selectedCreator
-                      }
+                        creator: selectedCreator,
+                      },
                     });
                     return null;
                   })()}
                 </div>
-                
+
                 <SearchResults
                   results={filteredResults}
                   isLoading={false}
                   error={error}
+                  selectedSiteId={
+                    selectedSiteId !== "all" ? selectedSiteId : null
+                  }
                 />
               </div>
             )}
           </div>
         )}
 
-        {!query && !isLoading && results.length === 0 && filteredResults.length === 0 && (
-          <div className="text-center pt-8 pb-12">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-primary/10 text-primary mb-6">
-              <Search className="w-10 h-10" />
-            </div>
-            <h2 className="text-2xl font-medium mb-3">Search your content</h2>
-            <p className="text-muted-foreground max-w-lg mx-auto mb-8">
-              Enter keywords to search across your emails, files, documents, and
-              more. Use filters to narrow down your results.
-            </p>
-            {recentSearches.length > 0 && (
-              <div className="max-w-md mx-auto">
-                <h3 className="text-sm font-medium text-muted-foreground mb-3">
-                  Recent searches:
-                </h3>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {recentSearches.map((search, index) => (
-                    <button
-                      key={index}
-                      className="px-3 py-1.5 bg-background border border-border/60 rounded-full text-sm hover:border-primary/40 transition-colors"
-                      onClick={() => {
-                        setQuery(search);
-                        handleSearch();
-                      }}
-                    >
-                      {search}
-                    </button>
-                  ))}
-                </div>
+        {!query &&
+          !isLoading &&
+          results.length === 0 &&
+          filteredResults.length === 0 && (
+            <div className="text-center pt-8 pb-12">
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-primary/10 text-primary mb-6">
+                <Search className="w-10 h-10" />
               </div>
-            )}
-          </div>
-        )}
+              <h2 className="text-2xl font-medium mb-3">Search your content</h2>
+              <p className="text-muted-foreground max-w-lg mx-auto mb-8">
+                Enter keywords to search across your emails, files, documents,
+                and more. Use filters to narrow down your results.
+              </p>
+              {recentSearches.length > 0 && (
+                <div className="max-w-md mx-auto">
+                  <h3 className="text-sm font-medium text-muted-foreground mb-3">
+                    Recent searches:
+                  </h3>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {recentSearches.map((search, index) => (
+                      <button
+                        key={index}
+                        className="px-3 py-1.5 bg-background border border-border/60 rounded-full text-sm hover:border-primary/40 transition-colors"
+                        onClick={() => {
+                          setQuery(search);
+                          handleSearch();
+                        }}
+                      >
+                        {search}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
       </div>
     </div>
   );
 }
-

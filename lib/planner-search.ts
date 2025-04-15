@@ -26,11 +26,98 @@ interface PlannerTaskDetails {
   }
 }
 
+interface SearchHit {
+  resource: PlannerTaskDetails;
+  score?: number;
+}
+
 export async function searchPlannerTasks(userId: string, query: string): Promise<SearchResult[]> {
   try {
     const accessToken = await getValidAccessToken(userId);
     const graphClient = await getGraphClient(accessToken);
 
+    // Use the search endpoint for planner tasks
+    const searchResponse = await graphClient
+      .api('/search/query')
+      .post({
+        requests: [{
+          entityTypes: ['plannerTask'],
+          query: {
+            queryString: query,
+          },
+          from: 0,
+          size: 25,
+          fields: [
+            'id',
+            'title',
+            'createdDateTime',
+            'dueDateTime',
+            'priority',
+            'percentComplete',
+            'description',
+            'createdBy',
+            'lastModifiedDateTime',
+            'lastModifiedBy'
+          ]
+        }]
+      });
+
+    if (!searchResponse?.value?.[0]?.hitsContainers?.[0]?.hits) {
+      // Fallback to traditional planner task API if search doesn't return results
+      return fallbackPlannerSearch(graphClient, query);
+    }
+
+    const hits = searchResponse.value[0].hitsContainers[0].hits;
+
+    // Process search results
+    const results = hits
+      .map((hit: SearchHit) => {
+        const task = hit.resource;
+        if (!task) return null;
+
+        // Use Microsoft's built-in relevance scoring directly
+        const score = hit.score || 0;
+
+        return {
+          id: task.id,
+          name: task.title,
+          webUrl: `https://tasks.office.com/searchable.no/Home/Task/${task.id}`,
+          lastModifiedDateTime: task.details?.lastModifiedDateTime || task.createdDateTime,
+          type: 'planner' as const,
+          preview: task.details?.description || '',
+          score,
+          createdBy: {
+            user: {
+              displayName: task.createdBy?.user?.displayName || 'Unknown'
+            }
+          },
+          lastModifiedBy: {
+            user: {
+              displayName: task.details?.lastModifiedBy?.user?.displayName || task.createdBy?.user?.displayName || 'Unknown'
+            }
+          }
+        };
+      })
+      .filter((task: SearchResult | null): task is SearchResult => task !== null)
+      .sort((a: SearchResult, b: SearchResult) => (b.score || 0) - (a.score || 0));
+
+    return results;
+  } catch (error) {
+    console.error('Error searching planner tasks with Search API:', error);
+    // If Search API fails, fall back to the traditional method
+    try {
+      const graphClient = await getGraphClient(await getValidAccessToken(userId));
+      return fallbackPlannerSearch(graphClient, query);
+    } catch (fallbackError) {
+      console.error('Fallback planner search also failed:', fallbackError);
+      return [];
+    }
+  }
+}
+
+// Fallback function using the previous implementation
+async function fallbackPlannerSearch(graphClient: any, query: string): Promise<SearchResult[]> {
+  try {
     // Get all tasks first since Planner API doesn't support full text search
     const plannerResponse = await graphClient
       .api('/me/planner/tasks')
@@ -56,78 +143,36 @@ export async function searchPlannerTasks(userId: string, query: string): Promise
       })
     );
 
-    // Calculate relevance scores and filter tasks
-    const scoredTasks = tasksWithDetails
-      .map(task => {
-        // Search in title and description
-        const lowerQuery = query.toLowerCase();
-        const titleWords = task.title.toLowerCase().split(/\s+/);
-        const descriptionWords = (task.details?.description || '').toLowerCase().split(/\s+/);
-        
-        // Check for word matches instead of exact string matches
-        const titleMatches = titleWords.filter(word => word.includes(lowerQuery) || lowerQuery.includes(word));
-        const descriptionMatches = descriptionWords.filter(word => word.includes(lowerQuery) || lowerQuery.includes(word));
-        
-        if (titleMatches.length === 0 && descriptionMatches.length === 0) {
-          return null;
-        }
-
-        // Calculate base score from matches
-        let score = 0;
-        
-        // Title matches (up to 100 points)
-        score += titleMatches.length * 25;
-        
-        // Description matches (up to 50 points)
-        score += descriptionMatches.length * 10;
-
-        // Boost score based on various factors
-        const now = new Date().getTime();
-        
-        // Recency boost (higher score for newer tasks)
-        const ageInDays = (now - new Date(task.createdDateTime).getTime()) / (1000 * 60 * 60 * 24);
-        score += Math.max(0, 30 - ageInDays); // Boost newer tasks, max 30 points
-
-        // Priority boost
-        score += (task.priority || 0) * 10; // 0-90 points based on priority
-
-        // Due date boost (boost tasks due soon)
-        if (task.dueDateTime) {
-          const daysUntilDue = (new Date(task.dueDateTime).getTime() - now) / (1000 * 60 * 60 * 24);
-          if (daysUntilDue > 0 && daysUntilDue < 7) {
-            score += Math.max(0, 70 - (daysUntilDue * 10)); // Up to 70 points for tasks due very soon
+    // Filter tasks that match the query
+    const lowerQuery = query.toLowerCase();
+    const matchingTasks = tasksWithDetails
+      .filter((task: PlannerTaskDetails) => 
+        task.title.toLowerCase().includes(lowerQuery) || 
+        (task.details?.description || '').toLowerCase().includes(lowerQuery)
+      )
+      .map((task: PlannerTaskDetails) => ({
+        id: task.id,
+        name: task.title,
+        webUrl: `https://tasks.office.com/searchable.no/Home/Task/${task.id}`,
+        lastModifiedDateTime: task.details?.lastModifiedDateTime || task.createdDateTime,
+        type: 'planner' as const,
+        preview: task.details?.description || '',
+        score: 1, // Basic score for fallback results
+        createdBy: {
+          user: {
+            displayName: task.createdBy?.user?.displayName || 'Unknown'
+          }
+        },
+        lastModifiedBy: {
+          user: {
+            displayName: task.details?.lastModifiedBy?.user?.displayName || task.createdBy?.user?.displayName || 'Unknown'
           }
         }
+      }));
 
-        // Completion status penalty
-        score -= task.percentComplete; // Lower score for tasks that are more complete
-
-        return {
-          id: task.id,
-          name: task.title,
-          webUrl: `https://tasks.office.com/searchable.no/Home/Task/${task.id}`,
-          lastModifiedDateTime: task.details?.lastModifiedDateTime || task.createdDateTime,
-          type: 'planner' as const,
-          preview: task.details?.description || '',
-          score,
-          createdBy: {
-            user: {
-              displayName: task.createdBy?.user?.displayName || 'Unknown'
-            }
-          },
-          lastModifiedBy: {
-            user: {
-              displayName: task.details?.lastModifiedBy?.user?.displayName || task.createdBy?.user?.displayName || 'Unknown'
-            }
-          }
-        };
-      })
-      .filter((task): task is NonNullable<typeof task> => task !== null)
-      .sort((a, b) => b.score - a.score);
-
-    return scoredTasks;
+    return matchingTasks;
   } catch (error) {
-    console.error('Error searching planner tasks:', error);
+    console.error('Error in fallback planner search:', error);
     return [];
   }
 } 

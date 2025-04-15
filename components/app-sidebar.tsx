@@ -15,6 +15,7 @@ import {
   Layout,
   Shield,
   FolderKanban,
+  Sparkles,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
@@ -25,6 +26,7 @@ const navigation = [
   { title: "Search", href: "/search/normal", icon: Search },
   { title: "Workspaces", href: "/workspaces", icon: Layout },
   { title: "Projects", href: "/projects", icon: FolderKanban },
+  { title: "AI Services", href: "/ai-services", icon: Sparkles },
   { title: "Settings", href: "/settings", icon: Settings },
   { title: "Help", href: "/help", icon: HelpCircle },
 ];
@@ -45,29 +47,29 @@ export function AppSidebar() {
   // Check if current user is admin
   useEffect(() => {
     if (!session?.user?.id) return;
-    
+
     const checkAdminStatus = async () => {
       try {
         console.log("Checking admin status for:", session.user.id);
-        
+
         const { data: profile, error } = await supabase
           .from("profiles")
           .select("is_admin")
           .eq("id", session.user.id)
           .single();
-  
+
         if (error) {
           console.error("Error checking admin status:", error);
           return;
         }
-  
+
         console.log("Admin status:", profile?.is_admin);
-        
+
         if (profile?.is_admin) {
           setIsAdmin(true);
-          setNavItems(prev => {
+          setNavItems((prev) => {
             // Only add the admin nav item if it doesn't already exist
-            if (!prev.find(item => item.href === "/admin")) {
+            if (!prev.find((item) => item.href === "/admin")) {
               return [...navigation, adminNavItem];
             }
             return prev;
@@ -77,37 +79,41 @@ export function AppSidebar() {
         console.error("Error in admin check:", error);
       }
     };
-    
+
     checkAdminStatus();
-    
+
     // Subscribe to profile changes
     const channel = supabase
-      .channel('profile-changes')
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'profiles',
-        filter: `id=eq.${session.user.id}`,
-      }, (payload) => {
-        console.log('Profile updated:', payload);
-        // Check if is_admin field was updated
-        if (payload.new && payload.new.is_admin !== undefined) {
-          if (payload.new.is_admin) {
-            setIsAdmin(true);
-            setNavItems(prev => {
-              if (!prev.find(item => item.href === "/admin")) {
-                return [...navigation, adminNavItem];
-              }
-              return prev;
-            });
-          } else {
-            setIsAdmin(false);
-            setNavItems(navigation);
+      .channel("profile-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+          filter: `id=eq.${session.user.id}`,
+        },
+        (payload) => {
+          console.log("Profile updated:", payload);
+          // Check if is_admin field was updated
+          if (payload.new && payload.new.is_admin !== undefined) {
+            if (payload.new.is_admin) {
+              setIsAdmin(true);
+              setNavItems((prev) => {
+                if (!prev.find((item) => item.href === "/admin")) {
+                  return [...navigation, adminNavItem];
+                }
+                return prev;
+              });
+            } else {
+              setIsAdmin(false);
+              setNavItems(navigation);
+            }
           }
         }
-      })
+      )
       .subscribe();
-      
+
     return () => {
       supabase.removeChannel(channel);
     };

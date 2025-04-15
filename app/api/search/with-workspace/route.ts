@@ -1,7 +1,7 @@
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { searchSharePointFiles, searchPlannerTasks, type SearchResult } from '@/lib/microsoft-graph';
+import { searchSharePointFiles, type SearchResult } from '@/lib/microsoft-graph';
 
 export async function GET(req: Request) {
   const cookieStore = cookies();
@@ -11,6 +11,8 @@ export async function GET(req: Request) {
   // Get query and workspace ID from URL params
   const query = url.searchParams.get('query') || url.searchParams.get('q');
   const workspaceId = url.searchParams.get('workspace');
+  
+  // We no longer need to parse or use content types since planner is always excluded
   
   if (!query) {
     return NextResponse.json({ 
@@ -152,31 +154,10 @@ export async function GET(req: Request) {
       results = [...results, ...filteredSharePointResults];
     }
     
-    // 2. Search in Planner plans if we have any
-    if (plannerPlans.length > 0) {
-      try {
-        const plannerResults = await searchPlannerTasks(user.id, query);
-        console.log('Planner search results count:', plannerResults.length);
-        
-        // Filter results to only include those from the workspace's resources
-        const filteredPlannerResults = plannerResults.filter(result => {
-          // Check if the task belongs to one of our plans
-          if (plannerPlans.includes(result.planId)) {
-            console.log('Planner match found for task:', result.title, '- Plan ID:', result.planId);
-            return true;
-          }
-          return false;
-        });
-        
-        console.log('Filtered Planner results count:', filteredPlannerResults.length);
-        
-        // Add filtered Planner results to the main results array
-        results = [...results, ...filteredPlannerResults];
-      } catch (error) {
-        console.error('Error searching Planner tasks:', error);
-        // Continue with SharePoint results even if Planner search fails
-      }
-    }
+    // We no longer search planner tasks regardless of workspace settings
+    
+    // Final filter to ensure no planner tasks are included
+    results = results.filter(result => result.type !== 'planner');
     
     return NextResponse.json({
       success: true,

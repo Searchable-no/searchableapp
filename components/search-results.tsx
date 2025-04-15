@@ -9,7 +9,7 @@ interface SearchResult {
   url?: string;
   lastModified: string;
   type: "email" | "document";
-  source: "google" | "microsoft";
+  source: "microsoft";
 }
 
 interface SearchCategory {
@@ -39,18 +39,10 @@ const ResultIcon: FC<{ type: string; className?: string }> = ({
   return <Calendar className={className} />;
 };
 
-const SourceBadge: FC<{ source: string }> = ({ source }) => {
-  const bgColor =
-    source === "microsoft" ? "bg-primary/10" : "bg-destructive/10";
-  const textColor =
-    source === "microsoft" ? "text-primary" : "text-destructive";
-  const borderColor =
-    source === "microsoft" ? "border-primary/20" : "border-destructive/20";
+const SourceBadge: FC = () => {
   return (
-    <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${textColor} ${borderColor} border`}
-    >
-      {source === "microsoft" ? "Microsoft 365" : "Google Workspace"}
+    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border-primary/20 border">
+      Microsoft 365
     </span>
   );
 };
@@ -196,7 +188,7 @@ const SearchResults: FC<SearchResultsProps> = ({ results, isLoading }) => {
                 {category.type === "email" ? "Emails" : "Documents"}
               </h3>
             </div>
-            <SourceBadge source={category.source} />
+            <SourceBadge />
             <span className="text-sm text-muted-foreground">•</span>
             <span className="text-sm text-muted-foreground">
               {category.count} results

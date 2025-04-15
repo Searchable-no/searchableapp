@@ -25,12 +25,12 @@ export async function GET(request: Request) {
 
   if (userError) {
     console.log('No user found for email:', email);
-    return NextResponse.json({ microsoft: false, google: false });
+    return NextResponse.json({ microsoft: false });
   }
 
   if (!user) {
     console.log('No user found for email:', email);
-    return NextResponse.json({ microsoft: false, google: false });
+    return NextResponse.json({ microsoft: false });
   }
 
   console.log('Found user with connections:', user.connections?.length || 0);
@@ -38,11 +38,10 @@ export async function GET(request: Request) {
   const connections = (user.connections || []) as Connection[];
   const status = {
     microsoft: false,
-    google: false,
   };
 
   connections.forEach((conn) => {
-    if (conn.provider === 'microsoft' || conn.provider === 'google') {
+    if (conn.provider === 'microsoft') {
       status[conn.provider as keyof typeof status] = true;
     }
   });

@@ -12,24 +12,42 @@ export async function GET() {
     const { data: { user } } = await supabase.auth.getUser();
     
     if (!user) {
+      console.error('No user found in session');
       return NextResponse.json({ 
         success: false, 
         error: 'Unauthorized' 
       }, { status: 401 });
     }
     
-    // Fetch Teams from Microsoft Graph
-    const teams = await getAllTeams(user.id);
+    // Get user_id from database
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', user.email)
+      .single();
+      
+    if (userError || !userData) {
+      console.error('Error fetching user from database:', userError);
+      return NextResponse.json({ 
+        success: false, 
+        error: 'User not found in database' 
+      }, { status: 404 });
+    }
     
+    console.log(`Fetching Teams for user ${userData.id}`);
+    
+    // Fetch Teams from Microsoft Graph
+    const teams = await getAllTeams(userData.id);
+    console.log(`Found ${teams.length} teams for user ${userData.id}`);
+    
+    // Match the expected format in the client - teams should be the top level key
     return NextResponse.json({
       success: true,
-      data: teams.map(team => ({
+      teams: teams.map(team => ({
         id: team.id,
-        name: team.displayName,
-        type: 'teams',
+        displayName: team.displayName,
         description: team.description || '',
-        // Teams URLs typically follow this pattern
-        url: `https://teams.microsoft.com/l/team/${team.id}/conversations`
+        createdDateTime: team.createdDateTime
       }))
     });
   } catch (error: unknown) {

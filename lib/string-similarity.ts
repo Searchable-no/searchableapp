@@ -40,18 +40,26 @@ export function levenshteinDistance(a: string, b: string): number {
  * @param b Second string
  * @returns Similarity score (1 = identical, 0 = completely different)
  */
-export function stringSimilarity(a: string, b: string): number {
-  if (!a.length && !b.length) return 1;
-  if (!a.length || !b.length) return 0;
+export function stringSimilarity(str1: string, str2: string): number {
+  if (!str1 && !str2) return 1.0; // Both empty strings
+  if (!str1 || !str2) return 0.0; // One empty string
   
-  // Normalize strings
-  a = a.toLowerCase();
-  b = b.toLowerCase();
+  // Use shorter/longer assignment for optimization
+  let shorter = str1;
+  let longer = str2;
+  if (str1.length > str2.length) {
+    longer = str1;
+    shorter = str2;
+  }
   
-  const distance = levenshteinDistance(a, b);
-  const maxLength = Math.max(a.length, b.length);
+  const longerLength = longer.length;
+  // If the longer string is empty, both are ""
+  if (longerLength === 0) {
+    return 1.0;
+  }
   
-  return 1 - distance / maxLength;
+  // Calculate Levenshtein distance
+  return (longerLength - levenshteinDistance(shorter, longer)) / longerLength;
 }
 
 /**
@@ -102,7 +110,25 @@ export const commonWords: Record<string, string[]> = {
   'agreement': ['agreemen', 'aggreement', 'agrement', 'agreemnt'],
   'lease': ['leas', 'leese', 'leeese', 'lese', 'leasse'],
   'tenant': ['tenent', 'tenaant', 'tennat', 'tennant'],
-  'landlord': ['landord', 'landlordd', 'landlod', 'lanldord']
+  'landlord': ['landord', 'landlordd', 'landlod', 'lanldord'],
+  
+  // Norwegian document/content search terms
+  'dokument': ['dokumentt', 'dokumnet', 'dokoment', 'documnet', 'dokiment'],
+  'fil': ['fli', 'fiil', 'fill', 'fyl'],
+  'søk': ['sok', 'soek', 'søkk', 'søg', 'sok'],
+  'tittel': ['titel', 'tittl', 'titell', 'tittel', 'titttel'],
+  'innhold': ['inhold', 'inhold', 'inhold', 'inhold', 'inhold'],
+  'tekst': ['text', 'tekts', 'texst', 'tektst', 'tekst'],
+  'bilde': ['bildet', 'billd', 'bild', 'bilde', 'billde'],
+  'vedlegg': ['vedleg', 'vedleggg', 'vedleg', 'vedlegg', 'vedlegget'],
+  'forfatter': ['forfater', 'forfatter', 'forffater', 'författer', 'forfatr'],
+  'dato': ['date', 'datto', 'daato', 'dato', 'datoo'],
+  'kategorier': ['kategorier', 'kategories', 'kategorir', 'katagorier', 'katagorier'],
+  'emne': ['emner', 'emmet', 'emmne', 'æmne', 'emmnet'],
+  'epost': ['epost', 'email', 'eppost', 'e-post', 'eposst'],
+  'melding': ['meldding', 'meling', 'meldnig', 'meldig', 'meldning'],
+  'mappe': ['map', 'mapper', 'maape', 'mape', 'mapp'],
+  'prosjekt': ['prosjct', 'projekkt', 'prosjket', 'projekt', 'prosject']
 };
 
 /**
@@ -126,4 +152,26 @@ export function suggestSpellingCorrection(query: string): string | null {
   // Then try to find a close match
   const allCorrectWords = Object.keys(commonWords);
   return findClosestMatch(lowerQuery, allCorrectWords, 0.8);
+}
+
+/**
+ * Performs a fuzzy search to find matches for a query in a list of strings
+ * 
+ * @param query The search query
+ * @param items Array of strings to search within
+ * @param threshold Minimum similarity score (0-1) to consider a match
+ * @returns Array of matches with their similarity scores, sorted by score
+ */
+export function fuzzySearch(query: string, items: string[], threshold = 0.6): Array<{item: string, score: number}> {
+  if (!query) return [];
+  
+  const normalizedQuery = query.toLowerCase().trim();
+  
+  return items
+    .map(item => ({
+      item,
+      score: stringSimilarity(normalizedQuery, item.toLowerCase().trim())
+    }))
+    .filter(result => result.score >= threshold)
+    .sort((a, b) => b.score - a.score);
 } 

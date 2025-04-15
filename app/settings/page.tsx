@@ -3,14 +3,13 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SidebarInset } from "@/components/ui/sidebar";
-import { Box, Mail } from "lucide-react";
+import { Box } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useSession } from "@/lib/session";
 
 interface ConnectionStatus {
   microsoft: boolean;
-  google: boolean;
 }
 
 interface IndexingProgress {
@@ -20,7 +19,6 @@ interface IndexingProgress {
 export default function SettingsPage() {
   const [status, setStatus] = useState<ConnectionStatus>({
     microsoft: false,
-    google: false,
   });
   const [indexingProgress, setIndexingProgress] = useState<IndexingProgress>({
     progress: 0,
@@ -152,27 +150,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleGoogleConnect = async () => {
-    if (status.google) {
-      // Handle disconnect
-      try {
-        const response = await fetch("/api/auth/google/disconnect", {
-          method: "POST",
-        });
-        if (!response.ok) {
-          throw new Error("Failed to disconnect");
-        }
-        await fetchConnectionStatus();
-        toast.success("Successfully disconnected from Google Workspace");
-      } catch (error) {
-        console.error("Error disconnecting:", error);
-        toast.error("Failed to disconnect from Google Workspace");
-      }
-    } else {
-      window.location.href = "/api/auth/google";
-    }
-  };
-
   return (
     <SidebarInset className="flex-1">
       <div className="flex flex-col gap-6 p-6">
@@ -222,30 +199,6 @@ export default function SettingsPage() {
                     {status.microsoft ? "Disconnect" : "Connect"}
                   </Button>
                 </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-                    <Mail className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground">
-                      Google Workspace
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      {status.google
-                        ? "Connected to Gmail, Drive, Calendar"
-                        : "Connect to Gmail, Drive, Calendar"}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  onClick={handleGoogleConnect}
-                  variant={status.google ? "destructive" : "default"}
-                >
-                  {status.google ? "Disconnect" : "Connect"}
-                </Button>
               </div>
             </div>
           </div>

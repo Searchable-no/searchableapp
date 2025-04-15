@@ -57,28 +57,14 @@ export async function searchEmails(userId: string, query: string): Promise<Searc
     }
 
     const hits = searchResponse.value[0].hitsContainers[0].hits;
-    const lowerQuery = query.toLowerCase();
 
     return hits
       .map((hit: SearchHit) => {
         const email = hit.resource;
         if (!email) return null;
 
-        // Calculate relevance score
-        let score = hit.score || 0; // Use the search score as a base
-        const subject = email.subject?.toLowerCase() || '';
-        const body = email.body?.content?.toLowerCase() || '';
-        const fromAddress = email.from?.emailAddress?.address?.toLowerCase() || '';
-        const fromName = email.from?.emailAddress?.name?.toLowerCase() || '';
-
-        // Boost score based on exact matches
-        if (subject === lowerQuery) score += 100;
-        else if (subject.includes(lowerQuery)) score += 50;
-        if (fromAddress.includes(lowerQuery)) score += 30;
-        if (fromName.includes(lowerQuery)) score += 30;
-        if (body?.includes(lowerQuery)) score += 20;
-        if (email.importance === 'high') score += 25;
-        if (email.hasAttachments && lowerQuery.includes('attachment')) score += 25;
+        // Use Microsoft's built-in relevance scoring directly
+        const score = hit.score || 0;
 
         return {
           id: email.id,

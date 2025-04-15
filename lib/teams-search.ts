@@ -22,10 +22,156 @@ interface ChatMessage extends TeamsMessage {
   topic?: string;
 }
 
+interface SearchHit {
+  resource: TeamsMessage;
+  score?: number;
+}
+
 export async function searchTeamsMessages(userId: string, query: string): Promise<SearchResult[]> {
   try {
     const accessToken = await getValidAccessToken(userId);
     const graphClient = await getGraphClient(accessToken);
+    
+    // If this is a wildcard search, use traditional method
+    if (query === '*') {
+      return traditionalTeamsSearch(graphClient, query);
+    }
+    
+    // Use the Microsoft Search API to search chat and channel messages
+    const searchResponse = await graphClient
+      .api('/search/query')
+      .post({
+        requests: [{
+          entityTypes: ['chatMessage'],
+          query: {
+            queryString: query,
+          },
+          from: 0,
+          size: 50,
+          fields: [
+            'id',
+            'body',
+            'from',
+            'createdDateTime',
+            'lastModifiedDateTime',
+            'webUrl',
+            'channelIdentity',
+            'chatId'
+          ]
+        }]
+      });
+
+    if (!searchResponse?.value?.[0]?.hitsContainers?.[0]?.hits) {
+      // If search returns no results, fall back to traditional method
+      return traditionalTeamsSearch(graphClient, query);
+    }
+
+    const hits = searchResponse.value[0].hitsContainers[0].hits;
+    const results: SearchResult[] = [];
+
+    // Process the search results
+    for (const hit of hits) {
+      try {
+        const message = hit.resource;
+        if (!message) continue;
+        
+        // Calculate cleaned content
+        const messageContent = message.body?.content || '';
+        const cleanContent = messageContent
+          .replace(/<[^>]*>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+          
+        // Use Microsoft's built-in relevance scoring directly
+        const score = hit.score || 0;
+        
+        // Determine if this is a chat or channel message and get extra metadata
+        let messageType: 'chat' | 'channel' = 'chat';
+        let teamName = 'Chat';
+        let channelName = 'Direct Message';
+        
+        // Get team and channel info if available
+        if (message.channelIdentity) {
+          messageType = 'channel';
+          
+          // Try to get team and channel names
+          try {
+            const team = await graphClient
+              .api(`/teams/${message.channelIdentity.teamId}`)
+              .get();
+              
+            const channel = await graphClient
+              .api(`/teams/${message.channelIdentity.teamId}/channels/${message.channelIdentity.channelId}`)
+              .get();
+              
+            teamName = team.displayName || 'Unknown Team';
+            channelName = channel.displayName || 'Unknown Channel';
+          } catch (error) {
+            console.error('Error getting team/channel details:', error);
+          }
+        } else if (message.chatId) {
+          try {
+            const chat = await graphClient
+              .api(`/me/chats/${message.chatId}`)
+              .get();
+            
+            channelName = chat.topic || 'Direct Message';
+          } catch (error) {
+            console.error('Error getting chat details:', error);
+          }
+        }
+        
+        results.push({
+          id: message.id,
+          name: cleanContent.substring(0, 100) + (cleanContent.length > 100 ? '...' : ''),
+          webUrl: message.webUrl || '',
+          lastModifiedDateTime: message.lastModifiedDateTime || message.createdDateTime,
+          type: messageType,
+          preview: cleanContent,
+          score,
+          from: {
+            name: message.from?.user?.displayName || 'Unknown'
+          },
+          location: {
+            team: teamName,
+            channel: channelName
+          },
+          createdBy: {
+            user: {
+              displayName: message.from?.user?.displayName || 'Unknown'
+            }
+          },
+          lastModifiedBy: {
+            user: {
+              displayName: message.from?.user?.displayName || 'Unknown'
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error processing message search hit:', error);
+      }
+    }
+    
+    // Sort results by score
+    return results.sort((a, b) => (b.score || 0) - (a.score || 0));
+    
+  } catch (error) {
+    console.error('Error searching Teams messages with Search API:', error);
+    // If Search API fails, fall back to the traditional method
+    try {
+      const graphClient = await getGraphClient(await getValidAccessToken(userId));
+      return traditionalTeamsSearch(graphClient, query);
+    } catch (fallbackError) {
+      console.error('Fallback Teams search also failed:', fallbackError);
+      return [];
+    }
+  }
+}
+
+// Traditional Teams search method as a fallback
+async function traditionalTeamsSearch(graphClient: any, query: string): Promise<SearchResult[]> {
+  try {
     const results: SearchResult[] = [];
     const lowerQuery = query.toLowerCase();
     const isWildcardSearch = query === '*';
@@ -74,17 +220,6 @@ export async function searchTeamsMessages(userId: string, query: string): Promis
                   .replace(/\s+/g, ' ')
                   .trim();
 
-                // Calculate score
-                let score = 0;
-                if (!isWildcardSearch) {
-                  const lowerContent = cleanContent.toLowerCase();
-                  const fromName = msg.from?.user?.displayName?.toLowerCase() || '';
-
-                  if (lowerContent === lowerQuery) score += 100;
-                  else if (lowerContent.includes(lowerQuery)) score += 50;
-                  if (fromName.includes(lowerQuery)) score += 30;
-                }
-
                 return {
                   id: msg.id,
                   name: cleanContent.substring(0, 100) + (cleanContent.length > 100 ? '...' : ''),
@@ -92,7 +227,7 @@ export async function searchTeamsMessages(userId: string, query: string): Promis
                   lastModifiedDateTime: msg.lastModifiedDateTime || msg.createdDateTime,
                   type: 'channel' as const,
                   preview: cleanContent,
-                  score,
+                  score: 1, // Basic score for fallback results
                   from: {
                     name: msg.from?.user?.displayName || 'Unknown'
                   },
@@ -160,17 +295,6 @@ export async function searchTeamsMessages(userId: string, query: string): Promis
                 .replace(/\s+/g, ' ')
                 .trim();
 
-              // Calculate score
-              let score = 0;
-              if (!isWildcardSearch) {
-                const lowerContent = cleanContent.toLowerCase();
-                const fromName = msg.from?.user?.displayName?.toLowerCase() || '';
-
-                if (lowerContent === lowerQuery) score += 100;
-                else if (lowerContent.includes(lowerQuery)) score += 50;
-                if (fromName.includes(lowerQuery)) score += 30;
-              }
-
               return {
                 id: msg.id,
                 name: cleanContent.substring(0, 100) + (cleanContent.length > 100 ? '...' : ''),
@@ -178,7 +302,7 @@ export async function searchTeamsMessages(userId: string, query: string): Promis
                 lastModifiedDateTime: msg.lastModifiedDateTime || msg.createdDateTime,
                 type: 'chat' as const,
                 preview: cleanContent,
-                score,
+                score: 1, // Basic score for fallback results
                 from: {
                   name: msg.from?.user?.displayName || 'Unknown'
                 },
@@ -214,9 +338,9 @@ export async function searchTeamsMessages(userId: string, query: string): Promis
     }
 
     // Sort all results by score
-    return results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    return results.sort((a, b) => (b.score || 0) - (a.score || 0));
   } catch (error) {
-    console.error('Error searching Teams messages:', error);
+    console.error('Error in fallback Teams search:', error);
     return [];
   }
 } 
