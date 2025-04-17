@@ -16,23 +16,52 @@ import {
   Shield,
   FolderKanban,
   Sparkles,
+  ChevronDown,
+  ChevronRight,
+  FileAudio,
+  Mail,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-const navigation = [
+type NavItemChild = {
+  title: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+type NavItem = {
+  title: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children?: NavItemChild[];
+};
+
+const navigation: NavItem[] = [
   { title: "Dashboard", href: "/dashboard", icon: BarChart3 },
   { title: "Search", href: "/search/normal", icon: Search },
   { title: "Workspaces", href: "/workspaces", icon: Layout },
   { title: "Projects", href: "/projects", icon: FolderKanban },
-  { title: "AI Services", href: "/ai-services", icon: Sparkles },
+  {
+    title: "AI Services",
+    href: "/ai-services",
+    icon: Sparkles,
+    children: [
+      {
+        title: "Transcription",
+        href: "/ai-services/transcription",
+        icon: FileAudio,
+      },
+      { title: "Email", href: "/ai-services/email", icon: Mail },
+    ],
+  },
   { title: "Settings", href: "/settings", icon: Settings },
   { title: "Help", href: "/help", icon: HelpCircle },
 ];
 
 // Admin navigation item that will be conditionally added
-const adminNavItem = { title: "Admin", href: "/admin", icon: Shield };
+const adminNavItem: NavItem = { title: "Admin", href: "/admin", icon: Shield };
 
 export function AppSidebar() {
   const pathname = usePathname();
@@ -40,9 +69,27 @@ export function AppSidebar() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const { session } = useSession();
-  const [isAdmin, setIsAdmin] = useState(false);
   const [navItems, setNavItems] = useState([...navigation]);
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const supabase = createClientComponentClient();
+
+  // Check if AI Services section should be expanded based on current path
+  useEffect(() => {
+    if (pathname.startsWith("/ai-services")) {
+      setExpandedItems((prev) =>
+        prev.includes("/ai-services") ? prev : [...prev, "/ai-services"]
+      );
+    }
+  }, [pathname]);
+
+  // Toggle expanded state for navigation items with children
+  const toggleExpand = (href: string) => {
+    setExpandedItems((prev) =>
+      prev.includes(href)
+        ? prev.filter((item) => item !== href)
+        : [...prev, href]
+    );
+  };
 
   // Check if current user is admin
   useEffect(() => {
@@ -66,7 +113,6 @@ export function AppSidebar() {
         console.log("Admin status:", profile?.is_admin);
 
         if (profile?.is_admin) {
-          setIsAdmin(true);
           setNavItems((prev) => {
             // Only add the admin nav item if it doesn't already exist
             if (!prev.find((item) => item.href === "/admin")) {
@@ -98,7 +144,6 @@ export function AppSidebar() {
           // Check if is_admin field was updated
           if (payload.new && payload.new.is_admin !== undefined) {
             if (payload.new.is_admin) {
-              setIsAdmin(true);
               setNavItems((prev) => {
                 if (!prev.find((item) => item.href === "/admin")) {
                   return [...navigation, adminNavItem];
@@ -106,7 +151,6 @@ export function AppSidebar() {
                 return prev;
               });
             } else {
-              setIsAdmin(false);
               setNavItems(navigation);
             }
           }
@@ -159,25 +203,88 @@ export function AppSidebar() {
         {navItems.map((item) => {
           const isActive =
             pathname === item.href || pathname.startsWith(item.href + "/");
+          const hasChildren = !!item.children && item.children.length > 0;
+          const isExpanded = expandedItems.includes(item.href);
+
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
-              }`}
-            >
-              <item.icon
-                className={`h-4 w-4 transition-colors ${
-                  isActive
-                    ? "text-sidebar-primary"
-                    : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
-                }`}
-              />
-              {item.title}
-            </Link>
+            <React.Fragment key={item.href}>
+              {hasChildren ? (
+                <div>
+                  <button
+                    onClick={() => toggleExpand(item.href)}
+                    className={`group flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                      isActive
+                        ? "bg-sidebar-accent text-sidebar-primary"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <item.icon
+                        className={`h-4 w-4 transition-colors ${
+                          isActive
+                            ? "text-sidebar-primary"
+                            : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
+                        }`}
+                      />
+                      {item.title}
+                    </span>
+                    {isExpanded ? (
+                      <ChevronDown className="h-3 w-3 text-sidebar-foreground/60" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3 text-sidebar-foreground/60" />
+                    )}
+                  </button>
+
+                  {isExpanded && item.children && (
+                    <div className="ml-4 mt-1 space-y-1">
+                      {item.children.map((child) => {
+                        const isChildActive =
+                          pathname === child.href ||
+                          pathname.startsWith(child.href + "/");
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            className={`group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                              isChildActive
+                                ? "bg-sidebar-accent text-sidebar-primary"
+                                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
+                            }`}
+                          >
+                            <child.icon
+                              className={`h-4 w-4 transition-colors ${
+                                isChildActive
+                                  ? "text-sidebar-primary"
+                                  : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
+                              }`}
+                            />
+                            {child.title}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Link
+                  href={item.href}
+                  className={`group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                    isActive
+                      ? "bg-sidebar-accent text-sidebar-primary"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
+                  }`}
+                >
+                  <item.icon
+                    className={`h-4 w-4 transition-colors ${
+                      isActive
+                        ? "text-sidebar-primary"
+                        : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
+                    }`}
+                  />
+                  {item.title}
+                </Link>
+              )}
+            </React.Fragment>
           );
         })}
       </nav>

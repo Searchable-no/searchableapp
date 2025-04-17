@@ -13,7 +13,7 @@ const TranscriptionService = dynamic(
 
 export default function TranscriptionPage() {
   return (
-    <div className="container max-w-7xl mx-auto p-4 md:p-8">
+    <div className="w-full h-full p-4 md:p-6">
       <TranscriptionService />
     </div>
   );

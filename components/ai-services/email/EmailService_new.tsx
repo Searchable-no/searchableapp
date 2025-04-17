@@ -4,12 +4,12 @@ import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { useUser } from "@/lib/hooks";
 import { EmailMessage } from "@/lib/microsoft-graph";
-import { MessageSquare, Bug, RotateCw, Building } from "lucide-react";
+import { MessageSquare, Bug, RotateCw } from "lucide-react";
 import { ApiDebug } from "./ApiDebug";
 import { getData, refreshTileData } from "@/app/dashboard/actions";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "@/lib/utils";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import EmailRenderer from "./EmailRenderer";
 
@@ -19,9 +19,10 @@ const emailContentStyles = `
     overflow-wrap: break-word;
     word-wrap: break-word;
     word-break: break-word;
-    font-family: inherit;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
     line-height: 1.5;
-    color: inherit;
+    color: #333;
   }
   
   .email-content img {
@@ -94,6 +95,22 @@ const emailContentStyles = `
   }
 `;
 
+// Helper function to sanitize and parse HTML content
+const renderEmailContent = (htmlContent: string) => {
+  if (!htmlContent) return <p>No content available</p>;
+
+  // Sanitize HTML first using DOMPurify
+  const sanitizedHtml = DOMPurify.sanitize(htmlContent, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ["target"], // Allow target attribute for links
+    FORBID_TAGS: ["script", "iframe", "object", "embed"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"], // Remove event handlers
+  });
+
+  // Then parse it to React elements
+  return <div className="email-content">{parse(sanitizedHtml)}</div>;
+};
+
 // Define a thread type
 type EmailThread = {
   id: string;
@@ -102,70 +119,6 @@ type EmailThread = {
   latestEmail: EmailMessage;
   hasUnread: boolean;
   conversationId: string;
-};
-
-// Helper for getting consistent background colors based on sender name
-const getAvatarColor = (name: string): string => {
-  const colors = [
-    "bg-blue-100 text-blue-700",
-    "bg-green-100 text-green-700",
-    "bg-yellow-100 text-yellow-700",
-    "bg-red-100 text-red-700",
-    "bg-purple-100 text-purple-700",
-    "bg-pink-100 text-pink-700",
-    "bg-indigo-100 text-indigo-700",
-    "bg-gray-100 text-gray-700",
-  ];
-
-  // Use a simple hash function to get a consistent color for each name
-  const hashCode = name.split("").reduce((acc, char) => {
-    return char.charCodeAt(0) + ((acc << 5) - acc);
-  }, 0);
-
-  return colors[Math.abs(hashCode) % colors.length];
-};
-
-// Helper to get initials from name
-const getInitials = (name: string): string => {
-  if (!name) return "?";
-
-  // For email addresses, return the first letter
-  if (name.includes("@")) {
-    return name.charAt(0).toUpperCase();
-  }
-
-  // For names, get first letter of first and last name
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) {
-    return parts[0].charAt(0).toUpperCase();
-  }
-
-  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-};
-
-// Helper to determine if a string is a company name
-const isCompanyName = (name: string): boolean => {
-  if (!name) return false;
-
-  const companyWords = [
-    "inc",
-    "corp",
-    "ltd",
-    "llc",
-    "gmbh",
-    "co",
-    "as",
-    "ab",
-    "sa",
-    "pty",
-    "limited",
-  ];
-  const lowercaseName = name.toLowerCase();
-
-  return (
-    companyWords.some((word) => lowercaseName.includes(word)) ||
-    (!name.includes(" ") && !name.includes("@") && name.length > 2)
-  );
 };
 
 export default function EmailService() {
@@ -303,6 +256,42 @@ export default function EmailService() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper function to ensure we get complete email content
+  const getFullEmailContent = (email: EmailMessage): string => {
+    // Try to get the complete content with fallbacks
+
+    // First try the body content which should contain the full HTML
+    if (email.body?.content && email.body.content.trim().length > 0) {
+      // Check if content appears to be truncated (ends abruptly with no closing tags)
+      const content = email.body.content;
+
+      // Simple check if the content appears complete
+      if (
+        content.includes("</html>") ||
+        content.includes("</body>") ||
+        content.trim().endsWith("</div>") ||
+        content.trim().endsWith("</p>")
+      ) {
+        return content;
+      }
+
+      // If content seems truncated, try to add closure
+      if (email.bodyPreview && !content.includes(email.bodyPreview)) {
+        return `${content}<p>${email.bodyPreview}...</p>`;
+      }
+
+      return content;
+    }
+
+    // If no body content, try bodyPreview
+    if (email.bodyPreview && email.bodyPreview.trim().length > 0) {
+      return `<p>${email.bodyPreview}</p>`;
+    }
+
+    // Fallback
+    return "<p>No content available</p>";
   };
 
   const selectThread = (thread: EmailThread) => {
@@ -458,43 +447,6 @@ export default function EmailService() {
     }
   };
 
-  // Helper to render sender avatar consistently
-  const renderSenderAvatar = (
-    email: EmailMessage,
-    size = "h-10 w-10",
-    showUnread = false
-  ) => {
-    const fromName = email.from?.emailAddress?.name || "";
-    const fromAddress = email.from?.emailAddress?.address || "";
-
-    return (
-      <Avatar
-        className={`${size} ${
-          showUnread && !email.isRead && !email.isSent
-            ? "ring-2 ring-primary ring-offset-1"
-            : ""
-        } ${email.isSent ? "bg-blue-100 text-blue-600" : ""}`}
-      >
-        {fromAddress?.includes("@supabase") && (
-          <AvatarImage src="/images/supabase-logo.png" alt="Supabase" />
-        )}
-        <AvatarFallback
-          className={
-            email.isSent ? "" : getAvatarColor(fromName || fromAddress || "?")
-          }
-        >
-          {email.isSent ? (
-            "Y" // "You"
-          ) : isCompanyName(fromName) ? (
-            <Building className="h-5 w-5" />
-          ) : (
-            getInitials(fromName || fromAddress || "?")
-          )}
-        </AvatarFallback>
-      </Avatar>
-    );
-  };
-
   return (
     <div className="flex flex-col w-full h-full">
       {/* Add styles to component */}
@@ -502,11 +454,11 @@ export default function EmailService() {
         {emailContentStyles}
       </style>
 
-      <div className="flex flex-col md:flex-row w-full h-[calc(100vh-70px)] gap-0 border rounded-lg overflow-hidden bg-white shadow-sm">
+      <div className="flex flex-col md:flex-row w-full h-[calc(100vh-150px)] gap-0 border rounded-lg overflow-hidden bg-white shadow-sm">
         {/* Inbox Panel */}
-        <div className="w-full md:w-[350px] lg:w-[400px] border-r border-gray-100 overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white">
-            <h2 className="font-medium text-gray-900">Inbox</h2>
+        <div className="w-full md:w-[380px] border-r border-gray-100 overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white">
+            <h2 className="text-lg font-medium text-gray-900">Inbox</h2>
             <Button
               variant="ghost"
               size="icon"
@@ -526,7 +478,7 @@ export default function EmailService() {
                 <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full"></div>
               </div>
             ) : threads.length === 0 ? (
-              <div className="p-4 text-center text-muted-foreground">
+              <div className="p-6 text-center text-muted-foreground">
                 No emails found
               </div>
             ) : (
@@ -534,18 +486,30 @@ export default function EmailService() {
                 {threads.map((thread) => (
                   <div
                     key={thread.id}
-                    className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors duration-150 ${
+                    className={`px-6 py-4 hover:bg-gray-50 cursor-pointer transition-colors duration-150 ${
                       selectedThread?.id === thread.id ? "bg-gray-50" : ""
                     }`}
                     onClick={() => selectThread(thread)}
                   >
                     <div className="flex items-center gap-3">
                       <div className="relative">
-                        {renderSenderAvatar(
-                          thread.latestEmail,
-                          "h-9 w-9",
-                          true
-                        )}
+                        <Avatar
+                          className={`h-10 w-10 ${
+                            thread.hasUnread
+                              ? "ring-2 ring-primary ring-offset-2"
+                              : ""
+                          }`}
+                        >
+                          <span className="font-semibold">
+                            {(
+                              thread.latestEmail.from?.emailAddress?.name ||
+                              thread.latestEmail.from?.emailAddress?.address ||
+                              "?"
+                            )
+                              .charAt(0)
+                              .toUpperCase()}
+                          </span>
+                        </Avatar>
                         {thread.emails.length > 1 && (
                           <div className="absolute -bottom-1 -right-1 bg-gray-200 text-gray-700 rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-medium">
                             {thread.emails.length}
@@ -555,21 +519,21 @@ export default function EmailService() {
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-start">
                           <span
-                            className={`font-medium truncate ${
+                            className={`font-medium text-sm truncate ${
                               thread.hasUnread ? "text-black" : "text-gray-600"
                             }`}
                           >
                             {thread.latestEmail.from?.emailAddress?.name ||
                               thread.latestEmail.from?.emailAddress?.address}
                           </span>
-                          <span className="text-gray-500 whitespace-nowrap ml-2">
+                          <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
                             {formatDistanceToNow(
                               new Date(thread.latestEmail.receivedDateTime)
                             )}
                           </span>
                         </div>
                         <div
-                          className={`truncate mt-0.5 ${
+                          className={`text-sm truncate mt-0.5 ${
                             thread.hasUnread
                               ? "font-semibold text-black"
                               : "font-medium text-gray-600"
@@ -577,7 +541,7 @@ export default function EmailService() {
                         >
                           {thread.subject}
                         </div>
-                        <div className="text-gray-500 truncate mt-0.5">
+                        <div className="text-xs text-gray-500 truncate mt-0.5">
                           {thread.latestEmail.bodyPreview}
                         </div>
                       </div>
@@ -593,24 +557,24 @@ export default function EmailService() {
         <div className="flex-1 flex flex-col overflow-hidden bg-white">
           {selectedEmail && selectedThread ? (
             <>
-              <div className="px-6 py-4 border-b border-gray-100 bg-white">
-                <h1 className="text-xl font-semibold text-gray-900 mb-1">
+              <div className="px-8 py-6 border-b border-gray-100 bg-white">
+                <h1 className="text-2xl font-semibold text-gray-900 mb-1">
                   {selectedThread.subject}
                 </h1>
-                <div className="text-gray-500 flex items-center">
+                <div className="text-sm text-gray-500 flex items-center">
                   <span>
                     {selectedThread.emails.length} messages in conversation
                   </span>
                 </div>
               </div>
 
-              <ScrollArea className="flex-1 px-6 py-4">
+              <ScrollArea className="flex-1 px-8 py-6">
                 {threadLoading ? (
                   <div className="flex justify-center items-center py-8">
                     <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full"></div>
                   </div>
                 ) : (
-                  <div className="space-y-6">
+                  <div className="space-y-8 max-w-3xl mx-auto">
                     {/* Display all emails in the thread in chronological order */}
                     {selectedThread?.emails.map((email, index) => (
                       <div key={email.id} className="relative">
@@ -624,7 +588,23 @@ export default function EmailService() {
                               : ""
                           }`}
                         >
-                          {renderSenderAvatar(email, "h-9 w-9 mt-1")}
+                          <Avatar
+                            className={`h-10 w-10 mt-1 ${
+                              email.isSent ? "bg-blue-100 text-blue-600" : ""
+                            }`}
+                          >
+                            <span className="font-semibold">
+                              {email.isSent
+                                ? "Y" // "You"
+                                : (
+                                    email.from?.emailAddress?.name ||
+                                    email.from?.emailAddress?.address ||
+                                    "?"
+                                  )
+                                    .charAt(0)
+                                    .toUpperCase()}
+                            </span>
+                          </Avatar>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                               <div>
@@ -634,26 +614,26 @@ export default function EmailService() {
                                     : email.from?.emailAddress?.name ||
                                       email.from?.emailAddress?.address}
                                 </div>
-                                <div className="text-gray-500 mt-0.5 flex items-center gap-2">
+                                <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
                                   <span>
                                     {new Date(
                                       email.receivedDateTime
                                     ).toLocaleString()}
                                   </span>
                                   {!email.isRead && !email.isSent && (
-                                    <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                                    <span className="bg-primary/10 text-primary text-[10px] px-1.5 py-0.5 rounded">
                                       Unread
                                     </span>
                                   )}
                                   {email.isSent && (
-                                    <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
+                                    <span className="bg-blue-100 text-blue-600 text-[10px] px-1.5 py-0.5 rounded">
                                       Sent
                                     </span>
                                   )}
                                 </div>
                               </div>
                             </div>
-                            <div className="mt-3 text-gray-700">
+                            <div className="mt-3 text-gray-700 text-sm">
                               <EmailRenderer email={email} />
                             </div>
                           </div>
@@ -664,35 +644,35 @@ export default function EmailService() {
                 )}
               </ScrollArea>
 
-              <div className="p-4 border-t border-gray-100">
+              <div className="p-6 border-t border-gray-100">
                 <Button
-                  className="w-full gap-2 mx-auto h-10 rounded-lg shadow-sm bg-primary hover:bg-primary/90"
+                  className="w-full max-w-lg gap-2 mx-auto h-12 rounded-lg shadow-sm bg-primary hover:bg-primary/90"
                   onClick={() =>
                     openChatWithEmail(selectedEmail, selectedThread)
                   }
                 >
-                  <MessageSquare className="h-4 w-4" />
+                  <MessageSquare className="h-5 w-5" />
                   Create AI Response
                 </Button>
               </div>
             </>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-gray-500">
-              <MessageSquare className="h-10 w-10 mb-3 text-gray-300" />
-              <h3 className="font-medium mb-1">No email selected</h3>
-              <p>Select an email thread from the inbox</p>
+              <MessageSquare className="h-12 w-12 mb-4 text-gray-300" />
+              <h3 className="text-lg font-medium mb-1">No email selected</h3>
+              <p className="text-sm">Select an email thread from the inbox</p>
             </div>
           )}
         </div>
       </div>
 
       {/* Debug section */}
-      <div className="mt-2">
+      <div className="mt-4">
         <Button
           variant="outline"
           size="sm"
           onClick={() => setShowDebug(!showDebug)}
-          className="flex items-center gap-1"
+          className="flex items-center gap-1 text-xs"
         >
           <Bug className="h-3 w-3" />
           {showDebug ? "Hide Diagnostics" : "Show Diagnostics"}

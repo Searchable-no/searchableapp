@@ -1,5 +1,31 @@
 import OpenAI from 'openai';
 import { getTranscriptionResult, getAllTranscriptionIds, setTranscriptionResult } from '../../transcription/store';
+import { ReactNode } from 'react';
+
+// Define message types with attachment support
+type Microsoft365Resource = {
+  id: string;
+  name: string;
+  type: "email" | "file";
+  icon?: ReactNode;
+  size?: number;
+  lastModifiedDateTime?: string;
+  webUrl?: string;
+  from?: {
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+  };
+  receivedDateTime?: string;
+  subject?: string;
+};
+
+type ChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  attachments?: Microsoft365Resource[];
+};
 
 // Create OpenAI client with API key from environment variable
 const openai = new OpenAI({
@@ -9,41 +35,11 @@ const openai = new OpenAI({
 export const runtime = 'edge'; // To support streaming
 
 // Helper function to create a properly formatted streaming response
-function createStream(res: AsyncIterable<any>) {
+function createStream(res: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
   const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
 
-  let counter = 0;
-  
   const stream = new ReadableStream({
     async start(controller) {
-      // Function to handle each chunk
-      function onParse(event: { type: string; data: string }) {
-        if (event.type === 'event') {
-          const data = event.data;
-          // If we've reached the end, close the stream
-          if (data === '[DONE]') {
-            controller.close();
-            return;
-          }
-          
-          try {
-            // Parse the data from the event
-            const json = JSON.parse(data);
-            const text = json.choices[0]?.delta?.content || '';
-            
-            if (text) {
-              // Increment the counter and send the token
-              counter++;
-              controller.enqueue(encoder.encode(text));
-            }
-          } catch (e) {
-            // Handle any parsing errors
-            controller.error(e);
-          }
-        }
-      }
-      
       // Process the response from OpenAI as a stream
       try {
         for await (const chunk of res) {
@@ -65,13 +61,14 @@ function createStream(res: AsyncIterable<any>) {
 
 export async function POST(req: Request) {
   try {
-    const { messages, transcriptionId, storedTranscription } = await req.json();
+    const { messages, transcriptionId, storedTranscription, model } = await req.json();
     
     // Debug - log all available IDs
     const allIds = getAllTranscriptionIds();
     console.log(`Available transcription IDs: ${allIds.join(', ') || 'none'}`);
     console.log(`Requested transcription ID: ${transcriptionId}`);
     console.log(`Client provided stored transcription: ${storedTranscription ? 'yes' : 'no'}`);
+    console.log(`Selected model: ${model || process.env.OPENAI_MODEL || 'gpt-4o'}`);
 
     if (!messages || !Array.isArray(messages)) {
       return new Response(JSON.stringify({ error: "Invalid message format" }), { 
@@ -113,7 +110,7 @@ export async function POST(req: Request) {
     }
 
     // Build system prompt with the transcription
-    const systemMessage = {
+    const systemMessage: OpenAI.Chat.ChatCompletionSystemMessageParam = {
       role: "system",
       content: `You are an assistant who helps analyze a transcription. 
 The user will ask you questions about the transcription, and you should answer based on its content.
@@ -129,15 +126,72 @@ Make sure to format your responses with headings, bullet points, and other markd
 `
     };
 
+    // Process each message to include attachment information if present
+    const processedMessages = messages.map((message: ChatMessage) => {
+      // If no attachments, return the message as is
+      if (!message.attachments || message.attachments.length === 0) {
+        if (message.role === "user") {
+          return {
+            role: "user",
+            content: message.content,
+          } as OpenAI.Chat.ChatCompletionUserMessageParam;
+        } else if (message.role === "assistant") {
+          return {
+            role: "assistant",
+            content: message.content,
+          } as OpenAI.Chat.ChatCompletionAssistantMessageParam;
+        } else {
+          return {
+            role: "system",
+            content: message.content,
+          } as OpenAI.Chat.ChatCompletionSystemMessageParam;
+        }
+      }
+      
+      // Format attachment descriptions
+      const attachmentDescriptions = message.attachments.map((attachment: Microsoft365Resource) => {
+        if (attachment.type === "email") {
+          return `- Email: "${attachment.name}" from ${attachment.from?.emailAddress?.name || attachment.from?.emailAddress?.address || "Unknown"}`;
+        } else {
+          return `- File: "${attachment.name}" (${attachment.size ? Math.round(attachment.size / 1024) + " KB" : "Size unknown"})`;
+        }
+      }).join("\n");
+      
+      // Combine content with attachment descriptions
+      const enhancedContent = `${message.content || ""}
+
+---
+Attachments:
+${attachmentDescriptions}
+---`;
+      
+      if (message.role === "user") {
+        return {
+          role: "user",
+          content: enhancedContent,
+        } as OpenAI.Chat.ChatCompletionUserMessageParam;
+      } else if (message.role === "assistant") {
+        return {
+          role: "assistant",
+          content: enhancedContent,
+        } as OpenAI.Chat.ChatCompletionAssistantMessageParam;
+      } else {
+        return {
+          role: "system",
+          content: enhancedContent,
+        } as OpenAI.Chat.ChatCompletionSystemMessageParam;
+      }
+    });
+
     // Add system message as first message
-    const apiMessages = [
+    const apiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       systemMessage,
-      ...messages
+      ...processedMessages
     ];
 
     // Create chat completion with streaming enabled
     const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
+      model: model || process.env.OPENAI_MODEL || 'gpt-4o',
       messages: apiMessages,
       temperature: 0.7,
       stream: true,

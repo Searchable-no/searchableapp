@@ -1,9 +1,23 @@
-'use client'
+"use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Mail, MessageSquare, Calendar, FileText, ListTodo, Users } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Mail,
+  MessageSquare,
+  Calendar,
+  FileText,
+  ListTodo,
+  Users,
+} from "lucide-react";
+import { LucideIcon } from "lucide-react";
 
-function TileSkeleton({ icon: Icon, title }: { icon: any, title: string }) {
+function TileSkeleton({
+  icon: Icon,
+  title,
+}: {
+  icon: LucideIcon;
+  title: string;
+}) {
   return (
     <Card className="h-full bg-gradient-to-br from-background to-muted/50 shadow-sm">
       <CardHeader className="py-1.5 px-2.5 border-b flex-none">
@@ -25,7 +39,7 @@ function TileSkeleton({ icon: Icon, title }: { icon: any, title: string }) {
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export function DashboardSkeleton() {
@@ -42,10 +56,10 @@ export function DashboardSkeleton() {
             <div className="h-8 w-8 animate-pulse rounded-lg bg-muted"></div>
           </div>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={Mail} title="Recent Emails" />
+            <TileSkeleton icon={Mail} title="Email Threads" />
           </div>
           <div className="h-[280px] rounded-lg">
             <TileSkeleton icon={MessageSquare} title="Teams Messages" />
@@ -65,5 +79,5 @@ export function DashboardSkeleton() {
         </div>
       </div>
     </div>
-  )
-} 
+  );
+}

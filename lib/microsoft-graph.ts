@@ -15,8 +15,21 @@ export interface EmailMessage {
   }
   receivedDateTime: string
   bodyPreview: string
+  body?: {
+    content: string
+    contentType: string
+  }
   webLink?: string
   isRead: boolean
+  conversationId?: string
+  sender?: {
+    emailAddress: {
+      name: string
+      address: string
+    }
+  }
+  isDraft?: boolean
+  isSent?: boolean
 }
 
 export interface TeamsMessage {
@@ -209,7 +222,7 @@ export async function getRecentEmails(userId: string) {
 
     const response = await graphClient
       .api('/me/mailFolders/inbox/messages')
-      .select('id,subject,from,receivedDateTime,bodyPreview,webLink,isRead')
+      .select('id,subject,from,receivedDateTime,bodyPreview,webLink,isRead,conversationId')
       .filter('isDraft eq false')
       .top(10)
       .orderby('receivedDateTime DESC')
@@ -229,6 +242,104 @@ export async function getRecentEmails(userId: string) {
     if (graphError.statusCode === 401) {
       console.error('Authentication error - token might be expired')
     }
+    return []
+  }
+}
+
+export async function getEmailThread(userId: string, conversationId: string) {
+  console.log('Fetching email thread for conversation:', conversationId)
+  
+  try {
+    const accessToken = await getValidAccessToken(userId)
+    const graphClient = await getGraphClient(accessToken)
+
+    // First, get a single email from this conversation to get the subject
+    const singleEmailResponse = await graphClient
+      .api('/me/messages')
+      .select('id,subject')
+      .filter(`conversationId eq '${conversationId}'`)
+      .top(1)
+      .get()
+    
+    if (!singleEmailResponse?.value || singleEmailResponse.value.length === 0) {
+      console.error('No email found with this conversationId')
+      return []
+    }
+    
+    const threadSubject = singleEmailResponse.value[0].subject || ''
+    const normalizedSubject = threadSubject.replace(/^(Re|Fwd|FW|RE|FWD|SV):\s*/i, "").trim()
+    
+    console.log('Thread subject:', threadSubject)
+    console.log('Normalized subject:', normalizedSubject)
+    
+    // Now fetch all inbox emails with similar subject or conversationId - request FULL body content
+    const inboxResponse = await graphClient
+      .api('/me/mailFolders/inbox/messages')
+      .select('id,subject,from,receivedDateTime,body,bodyPreview,webLink,isRead,conversationId,sender,isDraft')
+      .top(50)
+      .get()
+    
+    // And fetch sent messages with similar subject or conversationId - request FULL body content
+    const sentResponse = await graphClient
+      .api('/me/mailFolders/sentitems/messages')
+      .select('id,subject,from,receivedDateTime,body,bodyPreview,webLink,isRead,conversationId,sender,isDraft')
+      .top(50)
+      .get()
+    
+    console.log(`Found ${inboxResponse?.value?.length || 0} inbox messages and ${sentResponse?.value?.length || 0} sent messages to check`)
+    
+    // Improved matching logic that's more lenient to find related emails
+    const matchConversationOrSubject = (message: EmailMessage) => {
+      // Direct match by conversationId is the most reliable
+      if (message.conversationId === conversationId) {
+        console.log(`Message matched by conversationId: ${message.subject}`)
+        return true
+      }
+      
+      // Clean both subjects for comparison - more thorough normalization
+      const messageSubject = (message.subject || '').replace(/^(Re|Fwd|FW|RE|FWD|SV):\s*/i, "").trim()
+      const isSubjectMatch = messageSubject.toLowerCase() === normalizedSubject.toLowerCase()
+      
+      if (isSubjectMatch) {
+        console.log(`Message matched by subject: ${message.subject}`)
+        return true
+      }
+      
+      // More lenient subject match as fallback - check if normalized subject is contained within message subject
+      if (messageSubject.toLowerCase().includes(normalizedSubject.toLowerCase()) || 
+          normalizedSubject.toLowerCase().includes(messageSubject.toLowerCase())) {
+        console.log(`Message matched by partial subject: ${message.subject}`)
+        return true
+      }
+      
+      return false
+    }
+    
+    const inboxMessages = (inboxResponse.value || []).filter(matchConversationOrSubject)
+    const sentMessages = (sentResponse.value || []).filter(matchConversationOrSubject)
+    
+    console.log(`After filtering: ${inboxMessages.length} inbox messages and ${sentMessages.length} sent messages matched`)
+    
+    // Mark sent messages
+    sentMessages.forEach((msg: EmailMessage) => {
+      msg.isSent = true
+    })
+
+    // Combine all messages and sort by date (oldest first for conversation view)
+    const allThreadMessages = [...inboxMessages, ...sentMessages]
+      .sort((a, b) => 
+        new Date(a.receivedDateTime).getTime() - 
+        new Date(b.receivedDateTime).getTime()
+      )
+    
+    // Log the full content size of each message to help debug truncation
+    allThreadMessages.forEach((msg, index) => {
+      console.log(`Message ${index+1} "${msg.subject}" - bodyPreview length: ${msg.bodyPreview?.length || 0}, full body length: ${msg.body?.content?.length || 0}`)
+    })
+    
+    return allThreadMessages as EmailMessage[]
+  } catch (error) {
+    console.error('Error getting email thread:', error)
     return []
   }
 }

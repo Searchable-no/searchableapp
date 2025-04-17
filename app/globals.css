@@ -92,6 +92,7 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    font-size: 16px;
   }
 }
 
@@ -144,4 +145,76 @@ body {
 
 .dark ::-webkit-scrollbar-thumb:hover {
   @apply bg-muted-foreground/30;
+}
+
+/* Add styles for email content rendering */
+.email-content {
+  max-width: 100%;
+  overflow-x: auto;
+  line-height: 1.5;
+  max-height: 500px; /* Limit height but allow scrolling */
+  overflow-y: auto;
+}
+
+.email-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+.email-content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+}
+
+.email-content blockquote {
+  border-left: 3px solid hsl(var(--muted));
+  padding-left: 1rem;
+  margin-left: 0.5rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.email-content table {
+  border-collapse: collapse;
+  width: auto;
+  max-width: 100%;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  display: block;
+}
+
+.email-content table td,
+.email-content table th {
+  border: 1px solid hsl(var(--border));
+  padding: 0.5rem;
+}
+
+/* Ensures that HTML email content doesn't break the layout */
+.email-content * {
+  max-width: 100%;
+}
+
+/* Additional styles for email content */
+.email-content p {
+  margin-bottom: 1em;
+}
+
+.email-content ul,
+.email-content ol {
+  margin-left: 1.5em;
+  margin-bottom: 1em;
+}
+
+.email-content pre,
+.email-content code {
+  background-color: hsl(var(--muted));
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+/* Fix for Microsoft Exchange/Outlook-generated emails */
+.email-content div[style*="font-family: 'Calibri'"] {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif !important;
 }

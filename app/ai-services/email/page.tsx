@@ -10,7 +10,7 @@ const EmailService = dynamic(
 
 export default function EmailPage() {
   return (
-    <div className="container max-w-7xl mx-auto p-4 md:p-8">
+    <div className="w-full h-full p-4 md:p-6">
       <EmailService />
     </div>
   );
