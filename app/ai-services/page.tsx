@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Metadata } from "next";
-import { FileAudio, Mail, Sparkles } from "lucide-react";
+import { FileAudio, Mail, Sparkles, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
@@ -23,6 +23,12 @@ export default function AIServicesPage() {
       description: "Få hjelp med e-post og kommunikasjonsoppgaver",
       icon: Mail,
       href: "/ai-services/email",
+    },
+    {
+      title: "AI News",
+      description: "Få oppsummering av nyheter fra dine favorittkilder",
+      icon: Newspaper,
+      href: "/ai-services/ai-news",
     },
   ];
 

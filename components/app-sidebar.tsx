@@ -20,6 +20,7 @@ import {
   ChevronRight,
   FileAudio,
   Mail,
+  Newspaper,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
@@ -54,6 +55,7 @@ const navigation: NavItem[] = [
         icon: FileAudio,
       },
       { title: "Email", href: "/ai-services/email", icon: Mail },
+      { title: "AI News", href: "/ai-services/ai-news", icon: Newspaper },
     ],
   },
   { title: "Settings", href: "/settings", icon: Settings },
