@@ -2,16 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { OpenAI } from "openai";
 import { EmailMessage } from "@/lib/microsoft-graph";
 import { ReactNode } from "react";
+import { analyzeDocument } from "@/lib/document-intelligence";
 
 // Add type definitions
 type Microsoft365Resource = {
   id: string;
   name: string;
-  type: "email" | "file";
+  type: "email" | "file" | "files";
   icon?: ReactNode;
   size?: number;
   lastModifiedDateTime?: string;
   webUrl?: string;
+  url?: string;
   from?: {
     emailAddress?: {
       name?: string;
@@ -20,6 +22,7 @@ type Microsoft365Resource = {
   };
   receivedDateTime?: string;
   subject?: string;
+  content?: string; // Document content extracted by Document Intelligence
 };
 
 type ChatMessage = {
@@ -87,6 +90,26 @@ export async function POST(request: NextRequest) {
 
     const { messages, emailId, storedEmail, threadId, emailThread, model } = data;
 
+    // Debug: Log all messages with attachments to see what's being sent
+    console.log("Received messages with attachments:");
+    messages.forEach((message: ChatMessage, idx: number) => {
+      if (message.attachments && message.attachments.length > 0) {
+        console.log(`Message ${idx + 1} attachments (${message.attachments.length}):`);
+        message.attachments.forEach((attachment: Microsoft365Resource, attIdx: number) => {
+          console.log(`  Attachment ${attIdx + 1}:`);
+          console.log(`    Type: ${attachment.type}`);
+          console.log(`    Name: ${attachment.name}`);
+          console.log(`    ID: ${attachment.id}`);
+          console.log(`    URL: ${attachment.webUrl || attachment.url || 'No URL'}`);
+          console.log(`    Size: ${attachment.size ? Math.round(attachment.size / 1024) + ' KB' : 'Unknown size'}`);
+          console.log(`    Has content: ${attachment.content ? 'Yes' : 'No'}`);
+          if (attachment.content) {
+            console.log(`    Content length: ${attachment.content.length} characters`);
+          }
+        });
+      }
+    });
+
     // Create system message based on whether we have a single email or thread
     let emailContext = "";
     
@@ -99,16 +122,8 @@ export async function POST(request: NextRequest) {
       emailContext = createThreadContext(emailThread);
     }
 
-    // Logg systemkonteksten som sendes til LLM-en
-    console.log("========== LLM SYSTEM CONTEXT ==========");
-    console.log(emailContext);
-    console.log("========================================");
-
-    // Set up streaming response
-    const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4o";
-    
-    // Process each message to include attachment information
-    const processedMessages = messages.map((message: ChatMessage) => {
+    // Process file attachments to extract content if not already available
+    const processedMessages = await Promise.all(messages.map(async (message: ChatMessage, messageIdx: number) => {
       // If no attachments, return the message as is
       if (!message.attachments || message.attachments.length === 0) {
         return {
@@ -117,14 +132,106 @@ export async function POST(request: NextRequest) {
         };
       }
       
-      // Format attachment descriptions
-      const attachmentDescriptions = message.attachments.map((attachment: Microsoft365Resource) => {
+      console.log(`Processing message ${messageIdx + 1} with ${message.attachments?.length || 0} attachments`);
+      
+      // Process attachments to extract content where needed
+      const processedAttachments = await Promise.all((message.attachments || []).map(async (attachment: Microsoft365Resource, attachmentIdx: number) => {
+        console.log(`Checking attachment ${attachmentIdx + 1}/${message.attachments?.length || 0}:`, {
+          id: attachment.id,
+          name: attachment.name,
+          webUrl: attachment.webUrl,
+          url: attachment.url,
+          size: attachment.size,
+          type: attachment.type
+        });
+        
+        // Only process file attachments that don't already have content
+        if ((attachment.type === "file" || attachment.type === "files") && !attachment.content) {
+          try {
+            // Skip folders
+            if (attachment.name.endsWith('/') || !attachment.name.includes('.')) {
+              console.log(`Skipping folder: "${attachment.name}"`);
+              return attachment;
+            }
+            
+            // Get the file URL - use webUrl or url property, whichever is available
+            const fileUrl = attachment.webUrl || attachment.url;
+            if (fileUrl) {
+              console.log(`Processing file attachment ${attachmentIdx + 1}: "${attachment.name}" with URL: ${fileUrl}`);
+              
+              try {
+                // Check if Document Intelligence API credentials are configured
+                console.log(`Document Intelligence API configuration:
+                  - Endpoint configured: ${!!process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}
+                  - API Key configured: ${!!process.env.AZURE_DOCUMENT_INTELLIGENCE_API_KEY}
+                `);
+                
+                // Call document analysis API
+                console.log(`Attempting to analyze document "${attachment.name}" with parameters:
+                  - fileUrl: ${fileUrl}
+                  - fileName: ${attachment.name}
+                  - fileType: ${getFileContentType(attachment.name)}
+                  - fileSize: ${attachment.size}
+                  - lastModified: ${attachment.lastModifiedDateTime}
+                `);
+                
+                const documentContent = await analyzeDocument(
+                  fileUrl,
+                  attachment.name,
+                  getFileContentType(attachment.name),
+                  attachment.size,
+                  attachment.lastModifiedDateTime
+                );
+                
+                console.log(`Successfully analyzed document "${attachment.name}". Content length: ${documentContent.content.length} characters`);
+                console.log(`Content preview: "${documentContent.content.substring(0, 100)}..."`);
+                
+                return {
+                  ...attachment,
+                  content: documentContent.content
+                };
+              } catch (analyzeError: any) {
+                console.error(`Error analyzing document "${attachment.name}":`, analyzeError);
+                // Add error to system message but continue processing other attachments
+                emailContext += `\nNote: Failed to analyze document "${attachment.name}" due to: ${analyzeError.message}`;
+                return attachment;
+              }
+            } else {
+              console.error(`No URL found for attachment "${attachment.name}"`);
+              return attachment;
+            }
+          } catch (error) {
+            console.error(`Error processing attachment ${attachment.name}:`, error);
+            return attachment;
+          }
+        } else if (attachment.content) {
+          console.log(`Attachment "${attachment.name}" already has content (${attachment.content.length} characters)`);
+          return attachment;
+        } else {
+          console.log(`Skipping non-file attachment "${attachment.name}" (type: ${attachment.type})`);
+          return attachment;
+        }
+      }));
+      
+      // Format attachment descriptions, now including content where available
+      const attachmentDescriptions = processedAttachments.map((attachment: Microsoft365Resource, idx: number) => {
         if (attachment.type === "email") {
           return `- Email: "${attachment.name}" from ${attachment.from?.emailAddress?.name || attachment.from?.emailAddress?.address || "Unknown"}`;
         } else {
-          return `- File: "${attachment.name}" (${attachment.size ? Math.round(attachment.size / 1024) + " KB" : "Size unknown"})`;
+          const sizeInfo = attachment.size ? `(${Math.round(attachment.size / 1024)} KB)` : "(Size unknown)";
+          
+          // If we have content, include it in the message
+          if (attachment.content) {
+            console.log(`Including content for "${attachment.name}" (${attachment.content.length} characters)`);
+            return `- File: "${attachment.name}" ${sizeInfo}
+Content:
+${attachment.content}`;
+          } else {
+            console.log(`No content available for "${attachment.name}"`);
+            return `- File: "${attachment.name}" ${sizeInfo}`;
+          }
         }
-      }).join("\n");
+      }).join("\n\n");
       
       // Combine content with attachment descriptions
       const enhancedContent = `${message.content || ""}
@@ -138,7 +245,15 @@ ${attachmentDescriptions}
         role: message.role,
         content: enhancedContent,
       };
-    });
+    }));
+    
+    // Logg systemkonteksten som sendes til LLM-en
+    console.log("========== LLM SYSTEM CONTEXT ==========");
+    console.log(emailContext);
+    console.log("========================================");
+
+    // Set up streaming response
+    const modelToUse = model || process.env.OPENAI_MODEL || "gpt-4o";
     
     // Base config object without temperature
     const completionConfig = {
@@ -198,6 +313,41 @@ ${attachmentDescriptions}
   } catch (error) {
     console.error("Error in email chat API:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+// Helper to determine file MIME type from filename
+function getFileContentType(fileName: string): string | undefined {
+  if (!fileName) return undefined;
+  
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  
+  switch (extension) {
+    case 'pdf':
+      return 'application/pdf';
+    case 'doc':
+      return 'application/msword';
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'xls':
+      return 'application/vnd.ms-excel';
+    case 'xlsx':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case 'ppt':
+      return 'application/vnd.ms-powerpoint';
+    case 'pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case 'txt':
+      return 'text/plain';
+    case 'csv':
+      return 'text/csv';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    default:
+      return 'application/octet-stream';
   }
 }
 

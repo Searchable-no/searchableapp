@@ -6,6 +6,7 @@ import React from "react";
 import Chat, { Message } from "@/components/ai-services/Chat";
 import { Button } from "@/components/ui/button";
 import { Microsoft365Resource } from "@/components/ai-services/ResourcePicker";
+import { toast } from "@/components/ui/use-toast";
 
 type EmailAddress = {
   name?: string;
@@ -49,6 +50,8 @@ export default function EmailChatPage() {
   const [selectedModel, setSelectedModel] = useState<ModelOption>("gpt-4o");
   const [showEmailContent, setShowEmailContent] = useState(false);
   const [userId, setUserId] = useState<string>("");
+  const [isReplying, setIsReplying] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
 
   // Get email ID/thread ID and subject from URL parameters
   useEffect(() => {
@@ -81,6 +84,7 @@ export default function EmailChatPage() {
 
   const handleSingleEmail = (id: string, subject: string) => {
     console.log("Loading email with ID:", id);
+    setEmailId(id); // Sikre at emailId er satt
 
     // Try to get the saved email from localStorage
     try {
@@ -101,6 +105,15 @@ export default function EmailChatPage() {
           });
 
           setStoredEmail(parsedEmail);
+
+          // Dobbeltsjekk at vi har en gyldig emailId
+          if (parsedEmail.id) {
+            setEmailId(parsedEmail.id);
+            console.log("Using ID from parsed email:", parsedEmail.id);
+          } else {
+            console.log("Parsed email missing ID, using URL ID:", id);
+          }
+
           setError(null);
 
           // Add initial assistant message about the email
@@ -363,6 +376,124 @@ export default function EmailChatPage() {
     }
   };
 
+  // Handle sending a reply to the email
+  const handleSendReply = async (content: string) => {
+    console.log("EmailChatPage.handleSendReply called with: ", {
+      emailId: emailId,
+      threadId: threadId,
+      storedEmailId: storedEmail?.id,
+      hasContent: !!content?.trim(),
+      contentLength: content?.length || 0,
+    });
+
+    // Bruk threadId dersom emailId ikke er tilgjengelig
+    const messageId =
+      emailId || (storedEmail && storedEmail.id ? storedEmail.id : null);
+
+    if ((!messageId && !threadId) || !content.trim()) {
+      console.error("Cannot send reply without email/thread ID or content", {
+        hasEmailId: !!messageId,
+        hasThreadId: !!threadId,
+        hasContent: !!content?.trim(),
+      });
+      toast({
+        title: "Kan ikke sende svar",
+        description: "Mangler e-post ID eller innhold",
+        variant: "destructive",
+        duration: 5000,
+      });
+      return;
+    }
+
+    setIsReplying(true);
+    setReplyError(null);
+
+    try {
+      // Bruk det mest relevante ID-et for å svare
+      const effectiveId = messageId || threadId;
+      const isThread = !messageId && !!threadId;
+
+      console.log(
+        `Sending reply using ${
+          isThread ? "threadId" : "emailId"
+        }: ${effectiveId}, content length: ${content.length}`
+      );
+
+      const response = await fetch("/api/ai-services/email/reply", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // Viktig for autentisering
+        body: JSON.stringify({
+          emailId: messageId,
+          threadId: threadId,
+          isThread: isThread,
+          content,
+        }),
+      });
+
+      console.log(`Reply API response status: ${response.status}`);
+
+      // Få den fullstendige responsen
+      const responseText = await response.text();
+      let responseData;
+
+      try {
+        // Prøv å tolke JSON-responsen
+        responseData = JSON.parse(responseText);
+        console.log("Reply API response data:", responseData);
+      } catch (e) {
+        console.error("Failed to parse API response:", e);
+        console.error("Raw response:", responseText);
+        throw new Error("Serveren returnerte ugyldig respons");
+      }
+
+      if (!response.ok) {
+        // Vis detaljert feilmelding fra serveren om tilgjengelig
+        const errorMessage =
+          responseData.error || `Server returnerte feilkode ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      // Håndter den nye action-responsen
+      if (
+        responseData.action &&
+        responseData.action.type === "outlook_redirect"
+      ) {
+        console.log("Outlook redirect action detected");
+
+        // Returner hele responseData til Chat-komponenten
+        return responseData;
+      }
+
+      console.log("Reply sent successfully:", responseData);
+
+      toast({
+        title: "Svar sendt",
+        description:
+          "E-posten ble sendt som svar på den opprinnelige meldingen.",
+        duration: 3000,
+      });
+
+      return responseData;
+    } catch (error: any) {
+      console.error("Error sending reply:", error);
+      const errorMessage =
+        error.message || "Det oppstod en feil ved sending av svar";
+      setReplyError(errorMessage);
+      toast({
+        title: "Kunne ikke sende svar",
+        description: errorMessage,
+        variant: "destructive",
+        duration: 5000,
+      });
+      throw error;
+    } finally {
+      setIsReplying(false);
+    }
+  };
+
   // Handle model selection
   const handleModelSelect = (model: ModelOption) => {
     setSelectedModel(model);
@@ -525,6 +656,9 @@ export default function EmailChatPage() {
   // Render the current email content if it's visible
   const emailContentDisplay = showEmailContent ? renderEmailContent() : null;
 
+  // Log the emailId value to help with debugging
+  console.log(`Rendering Chat with emailId: ${emailId || "undefined"}`);
+
   return (
     <>
       {emailContentDisplay}
@@ -539,6 +673,13 @@ export default function EmailChatPage() {
         assistantName="AI Email Assistant"
         placeholder="Spør om e-posten..."
         userId={userId}
+        emailId={
+          emailId || storedEmail?.id
+            ? String(emailId || storedEmail?.id)
+            : undefined
+        }
+        threadId={threadId ? String(threadId) : undefined}
+        onSendReply={handleSendReply}
       />
     </>
   );

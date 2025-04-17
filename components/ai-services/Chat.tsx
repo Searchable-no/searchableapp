@@ -10,6 +10,10 @@ import {
   Search,
   Plus,
   Paperclip,
+  Reply,
+  Copy,
+  CheckCheck,
+  ExternalLink,
 } from "lucide-react";
 import React from "react";
 import ReactMarkdown from "react-markdown";
@@ -17,12 +21,39 @@ import remarkGfm from "remark-gfm";
 import ResourcePicker, { Microsoft365Resource } from "./ResourcePicker";
 import AttachedResources from "./AttachedResources";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export type Message = {
   role: "user" | "assistant";
   content: string;
   attachments?: Microsoft365Resource[];
 };
+
+// Interface for reply response
+interface OutlookRedirectAction {
+  type: "outlook_redirect";
+  url: string;
+  message: string;
+  content: string;
+  emailInfo?: {
+    subject?: string;
+    recipient?: string;
+  };
+}
+
+interface ReplyResponse {
+  success: boolean;
+  action?: OutlookRedirectAction;
+  message?: string;
+  error?: string;
+}
 
 export interface ChatProps {
   messages: Message[];
@@ -40,6 +71,9 @@ export interface ChatProps {
   disabled?: boolean;
   placeholder?: string;
   userId?: string;
+  emailId?: string;
+  threadId?: string;
+  onSendReply?: (content: string) => Promise<ReplyResponse | void>;
 }
 
 export default function Chat({
@@ -55,6 +89,9 @@ export default function Chat({
   disabled = false,
   placeholder = "Ask anything...",
   userId = "",
+  emailId,
+  threadId,
+  onSendReply,
 }: ChatProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -62,6 +99,15 @@ export default function Chat({
     Microsoft365Resource[]
   >([]);
   const [isResourcePickerOpen, setIsResourcePickerOpen] = useState(false);
+  const [isSendingReply, setIsSendingReply] = useState(false);
+  const [replySuccess, setReplySuccess] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [showReplyPreview, setShowReplyPreview] = useState(false);
+  const [replyPreviewContent, setReplyPreviewContent] = useState("");
+  const [replyUrl, setReplyUrl] = useState("");
+  const [isCopied, setIsCopied] = useState(false);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailRecipient, setEmailRecipient] = useState("");
 
   // Scroll to bottom of messages when new ones come in
   useEffect(() => {
@@ -98,6 +144,92 @@ export default function Chat({
     setAttachedResources((prev) =>
       prev.filter((resource) => resource.id !== resourceId)
     );
+  };
+
+  // Handle sending a reply
+  const handleSendReply = async (content: string) => {
+    console.log("handleSendReply called with: ", {
+      emailId: emailId,
+      threadId: threadId,
+      contentLength: content?.length || 0,
+      hasContent: !!content?.trim(),
+      onSendReply: !!onSendReply,
+    });
+
+    // Sjekk om vi har alle nødvendige data
+    if (!emailId && !threadId) {
+      console.error("Cannot send reply - missing both emailId and threadId");
+      return;
+    }
+
+    if (!content?.trim()) {
+      console.error("Cannot send reply - content is empty");
+      return;
+    }
+
+    if (!onSendReply) {
+      console.error("Cannot send reply - onSendReply function not provided");
+      return;
+    }
+
+    setIsSendingReply(true);
+    setReplySuccess(false);
+    setReplyError(null);
+
+    try {
+      const result = await onSendReply(content);
+
+      // Sjekk om vi fikk tilbake URL og informasjon om en outlook_redirect action
+      if (
+        result &&
+        "action" in result &&
+        result.action?.type === "outlook_redirect"
+      ) {
+        // Vis preview dialog istedet for å åpne direkte
+        setReplyPreviewContent(result.action.content);
+        setReplyUrl(result.action.url);
+
+        // Hent mer informasjon hvis tilgjengelig
+        if (result.action.emailInfo) {
+          setEmailSubject(result.action.emailInfo.subject || "");
+          setEmailRecipient(result.action.emailInfo.recipient || "");
+        }
+
+        // Vis preview dialog
+        setShowReplyPreview(true);
+        setReplySuccess(true);
+      } else {
+        // Fallback til gammel oppførsel
+        setTimeout(() => {
+          setReplySuccess(true);
+          setTimeout(() => setReplySuccess(false), 5000);
+        }, 1000);
+      }
+    } catch (error: any) {
+      console.error("Error sending reply:", error);
+      setReplyError(error.message || "Kunne ikke sende svar. Prøv igjen.");
+      setTimeout(() => setReplyError(null), 5000);
+    } finally {
+      setIsSendingReply(false);
+    }
+  };
+
+  // Kopier svarinnhold til utklippstavlen
+  const copyReplyContent = async () => {
+    try {
+      await navigator.clipboard.writeText(replyPreviewContent);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy content:", err);
+    }
+  };
+
+  // Åpne Outlook med URL-en
+  const openOutlookLink = () => {
+    window.open(replyUrl, "_blank");
+    // Lukk dialogen etter at vi har åpnet Outlook
+    setShowReplyPreview(false);
   };
 
   return (
@@ -142,7 +274,7 @@ export default function Chat({
                       <div className="mb-2 text-sm text-gray-500 px-1">
                         {assistantName}
                       </div>
-                      <div className="bg-white border border-gray-100 rounded-md px-4 py-3 text-gray-800 shadow-sm pb-6">
+                      <div className="bg-white border border-gray-100 rounded-md px-4 py-3 text-gray-800 shadow-sm pb-6 relative">
                         {message.content ? (
                           <div className="prose prose-sm max-w-none text-gray-800">
                             <ReactMarkdown
@@ -252,6 +384,60 @@ export default function Chat({
                             >
                               {message.content}
                             </ReactMarkdown>
+
+                            {/* Reply button - only show for assistant messages with content and when emailId or threadId is available */}
+                            {(emailId || threadId || index > 0) && (
+                              <div className="mt-4 flex gap-2 items-center">
+                                {(emailId || threadId) &&
+                                onSendReply &&
+                                message.content.trim() &&
+                                index > 0 ? (
+                                  <>
+                                    {isSendingReply ? (
+                                      <Button
+                                        disabled
+                                        className="text-xs h-8 bg-blue-500"
+                                      >
+                                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                        Forbereder svar...
+                                      </Button>
+                                    ) : replySuccess ? (
+                                      <div className="text-green-600 text-xs flex items-center">
+                                        <span>✓</span> Outlook åpnet!
+                                      </div>
+                                    ) : (
+                                      <Button
+                                        onClick={() =>
+                                          handleSendReply(message.content)
+                                        }
+                                        className="text-xs h-8 bg-blue-500 hover:bg-blue-600"
+                                        size="sm"
+                                      >
+                                        <Reply className="h-3 w-3 mr-1" />
+                                        Send som svar
+                                      </Button>
+                                    )}
+                                    {replyError && (
+                                      <div className="text-red-500 text-xs">
+                                        {replyError}
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="text-xs text-gray-400">
+                                    {!emailId && !threadId
+                                      ? "Mangler ID"
+                                      : !onSendReply
+                                      ? "Mangler onSendReply"
+                                      : !message.content.trim()
+                                      ? "Tomt innhold"
+                                      : index === 0
+                                      ? "Første melding"
+                                      : "Ukjent feil"}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ) : isLoading ? (
                           <div className="flex items-center">
@@ -361,6 +547,70 @@ export default function Chat({
         onSelectResources={handleSelectResources}
         userId={userId}
       />
+
+      {/* Reply Preview Dialog */}
+      <Dialog open={showReplyPreview} onOpenChange={setShowReplyPreview}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>
+              Svar på e-post{emailSubject ? `: ${emailSubject}` : ""}
+            </DialogTitle>
+            <DialogDescription>
+              {emailRecipient
+                ? `Til: ${emailRecipient}. Kopier teksten nedenfor og lim inn i Outlook.`
+                : "Kopier teksten nedenfor og lim inn i Outlook."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-2 bg-gray-50 p-4 rounded-md text-sm relative border max-h-[250px] overflow-y-auto">
+            <pre className="whitespace-pre-wrap font-sans">
+              {replyPreviewContent}
+            </pre>
+            <Button
+              className="absolute top-2 right-2 h-8 w-8 p-0"
+              size="sm"
+              variant="ghost"
+              onClick={copyReplyContent}
+            >
+              {isCopied ? (
+                <CheckCheck className="h-4 w-4 text-green-600" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowReplyPreview(false)}
+            >
+              Lukk
+            </Button>
+            <Button
+              onClick={copyReplyContent}
+              className="gap-2"
+              variant={isCopied ? "outline" : "default"}
+            >
+              {isCopied ? (
+                <>
+                  <CheckCheck className="h-4 w-4" />
+                  Kopiert!
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4" />
+                  Kopier tekst
+                </>
+              )}
+            </Button>
+            <Button onClick={openOutlookLink} className="gap-2">
+              <ExternalLink className="h-4 w-4" />
+              Åpne i Outlook
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

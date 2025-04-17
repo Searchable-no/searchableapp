@@ -11,16 +11,18 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, X, Upload, File, Mail } from "lucide-react";
 import { motion } from "framer-motion";
+import { useToast } from "@/components/ui/use-toast";
 
 // Define types for Microsoft 365 resources
 export type Microsoft365Resource = {
   id: string;
   name: string;
-  type: "email" | "file";
+  type: "email" | "file" | "files";
   icon?: React.ReactNode;
   size?: number;
   lastModifiedDateTime?: string;
   webUrl?: string;
+  url?: string; // SharePoint url field
   from?: {
     emailAddress?: {
       name?: string;
@@ -29,6 +31,7 @@ export type Microsoft365Resource = {
   };
   receivedDateTime?: string;
   subject?: string;
+  content?: string; // Document content extracted by Document Intelligence
 };
 
 interface SearchResultItem {
@@ -69,6 +72,8 @@ export default function ResourcePicker({
     Microsoft365Resource[]
   >([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const { toast } = useToast();
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -105,7 +110,7 @@ export default function ResourcePicker({
         const formattedResults = data.results.map((item: SearchResultItem) => ({
           id: item.id,
           name: activeTab === "emails" ? item.subject || item.name : item.name,
-          type: activeTab as "email" | "file",
+          type: activeTab as "email" | "file" | "files",
           icon:
             activeTab === "emails" ? (
               <Mail className="h-4 w-4" />
@@ -137,14 +142,114 @@ export default function ResourcePicker({
     return () => clearTimeout(timeoutId);
   }, [searchQuery, activeTab, userId]);
 
+  // Process document content using Azure Document Intelligence
+  const processDocumentContent = async (resource: Microsoft365Resource) => {
+    if (resource.type !== "file" && resource.type !== "files") {
+      return resource;
+    }
+
+    // Get the file URL - use webUrl or url property, whichever is available
+    const fileUrl = resource.webUrl || resource.url;
+    if (!fileUrl) {
+      console.error("File URL not available for", resource.name);
+      return resource;
+    }
+
+    try {
+      console.log(`Processing document: ${resource.name} with URL: ${fileUrl}`);
+
+      // Call the document analysis API
+      const response = await fetch("/api/documents/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileUrl,
+          fileName: resource.name,
+          fileType: getFileContentType(resource.name),
+          fileSize: resource.size,
+          lastModified: resource.lastModifiedDateTime,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to analyze document");
+      }
+
+      const data = await response.json();
+      console.log(
+        `Document processed successfully: ${resource.name}, content length: ${data.documentContent.content.length} characters`
+      );
+
+      // Return resource with extracted content
+      return {
+        ...resource,
+        content: data.documentContent.content,
+      };
+    } catch (error: any) {
+      console.error("Error processing document:", error);
+      toast({
+        title: "Behandling feilet",
+        description: `Kunne ikke hente innhold fra "${resource.name}": ${error.message}`,
+        variant: "destructive",
+        duration: 5000,
+      });
+      return resource;
+    }
+  };
+
+  // Helper to determine file MIME type from filename
+  const getFileContentType = (fileName: string): string => {
+    const extension = fileName.split(".").pop()?.toLowerCase();
+
+    switch (extension) {
+      case "pdf":
+        return "application/pdf";
+      case "doc":
+        return "application/msword";
+      case "docx":
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      case "xls":
+        return "application/vnd.ms-excel";
+      case "xlsx":
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      case "ppt":
+        return "application/vnd.ms-powerpoint";
+      case "pptx":
+        return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      case "txt":
+        return "text/plain";
+      case "csv":
+        return "text/csv";
+      case "jpg":
+      case "jpeg":
+        return "image/jpeg";
+      case "png":
+        return "image/png";
+      default:
+        return "application/octet-stream";
+    }
+  };
+
   // Handle selecting a resource
   const toggleResourceSelection = (resource: Microsoft365Resource) => {
+    console.log("Toggling resource selection:", resource);
+
     setSelectedResources((prev) => {
       const isSelected = prev.some((r) => r.id === resource.id);
+
       if (isSelected) {
-        return prev.filter((r) => r.id !== resource.id);
+        // Remove resource
+        const newResources = prev.filter((r) => r.id !== resource.id);
+        console.log("Resource removed, new count:", newResources.length);
+        return newResources;
       } else {
-        return [...prev, resource];
+        // Add resource
+        const newResources = [...prev, resource];
+        console.log("Resource added, new count:", newResources.length);
+        return newResources;
       }
     });
   };
@@ -154,10 +259,78 @@ export default function ResourcePicker({
     setSelectedResources((prev) => prev.filter((r) => r.id !== resourceId));
   };
 
-  // Save selected resources
-  const handleSave = () => {
-    onSelectResources(selectedResources);
-    onOpenChange(false);
+  // Save selected resources - NOW WITH DOCUMENT PROCESSING
+  const handleSave = async () => {
+    console.log("Saving selected resources, processing documents first...");
+
+    if (selectedResources.length === 0) {
+      onSelectResources([]);
+      onOpenChange(false);
+      return;
+    }
+
+    // Show saving state
+    setIsSaving(true);
+
+    try {
+      // Process all file resources to extract content
+      const fileResources = selectedResources.filter(
+        (r) => (r.type === "file" || r.type === "files") && !r.content
+      );
+      const otherResources = selectedResources.filter(
+        (r) => (r.type !== "file" && r.type !== "files") || r.content
+      );
+
+      if (fileResources.length > 0) {
+        toast({
+          title: "Behandler dokumenter",
+          description: `Analyserer ${fileResources.length} ${
+            fileResources.length === 1 ? "dokument" : "dokumenter"
+          }...`,
+          duration: 3000,
+        });
+
+        // Process all files in parallel
+        const processedFiles = await Promise.all(
+          fileResources.map((resource) => processDocumentContent(resource))
+        );
+
+        // Combine processed files with other resources
+        const allProcessedResources = [...otherResources, ...processedFiles];
+        console.log(
+          `Processed ${processedFiles.length} files, returning ${allProcessedResources.length} total resources`
+        );
+
+        // Log success message for each file that was processed
+        processedFiles.forEach((file) => {
+          if (file.content) {
+            console.log(
+              `Successfully extracted content from "${file.name}" (${file.content.length} characters)`
+            );
+          }
+        });
+
+        // Return all resources with content
+        onSelectResources(allProcessedResources);
+      } else {
+        console.log("No files to process, returning resources as is");
+        onSelectResources(selectedResources);
+      }
+
+      // Close the dialog
+      onOpenChange(false);
+    } catch (error) {
+      console.error("Error processing documents:", error);
+      toast({
+        title: "Behandling feilet",
+        description:
+          "Det oppsto en feil under behandling av dokumenter. Prøv igjen senere.",
+        variant: "destructive",
+        duration: 5000,
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Format date string
@@ -171,7 +344,7 @@ export default function ResourcePicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl p-0 overflow-hidden rounded-xl">
+      <DialogContent className="max-w-3xl p-0 pb-4 overflow-hidden rounded-xl">
         <div className="flex flex-col h-[600px]">
           <div className="p-4 border-b">
             <DialogTitle className="text-lg font-medium">
@@ -215,10 +388,17 @@ export default function ResourcePicker({
               </TabsList>
             </div>
 
-            <div className="flex-1 flex">
-              <div className="flex-1 overflow-hidden">
-                <TabsContent value="emails" className="h-full m-0">
-                  <ScrollArea className="h-[380px] p-4">
+            <div className="flex-1 flex overflow-hidden">
+              <div className="flex-1 overflow-hidden flex flex-col">
+                <TabsContent
+                  value="emails"
+                  className="h-full m-0 flex-1 overflow-hidden"
+                >
+                  <ScrollArea
+                    className={`${
+                      selectedResources.length > 0 ? "h-[300px]" : "h-[380px]"
+                    } p-4`}
+                  >
                     {isLoading ? (
                       <div className="flex justify-center items-center h-full">
                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
@@ -283,8 +463,15 @@ export default function ResourcePicker({
                   </ScrollArea>
                 </TabsContent>
 
-                <TabsContent value="files" className="h-full m-0">
-                  <ScrollArea className="h-[380px] p-4">
+                <TabsContent
+                  value="files"
+                  className="h-full m-0 flex-1 overflow-hidden"
+                >
+                  <ScrollArea
+                    className={`${
+                      selectedResources.length > 0 ? "h-[300px]" : "h-[380px]"
+                    } p-4`}
+                  >
                     {isLoading ? (
                       <div className="flex justify-center items-center h-full">
                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
@@ -293,7 +480,7 @@ export default function ResourcePicker({
                       <div className="space-y-3">
                         {searchResults.map((file) => (
                           <motion.div
-                            key={file.id || `file-${file.webUrl}`}
+                            key={file.id || `file-${file.webUrl || file.url}`}
                             initial={{ opacity: 0, y: 5 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.2 }}
@@ -355,7 +542,11 @@ export default function ResourcePicker({
                   <div
                     key={
                       resource.id ||
-                      `resource-${resource.webUrl || Math.random().toString()}`
+                      `resource-${
+                        resource.webUrl ||
+                        resource.url ||
+                        Math.random().toString()
+                      }`
                     }
                     className="flex items-center gap-1 bg-muted/50 py-1 px-2 rounded-md text-xs"
                   >
@@ -366,6 +557,7 @@ export default function ResourcePicker({
                     )}
                     <span className="max-w-[200px] truncate">
                       {resource.name}
+                      {resource.content ? " (innhold hentet)" : ""}
                     </span>
                     <button
                       onClick={(e) => {
@@ -382,7 +574,7 @@ export default function ResourcePicker({
             </div>
           )}
 
-          <div className="p-4 border-t flex justify-between items-center">
+          <div className="p-4 pt-6 pb-8 border-t flex justify-between items-center mt-auto">
             <div className="flex items-center">
               <Button variant="outline" size="sm" className="gap-1">
                 <Upload className="h-3 w-3" />
@@ -395,12 +587,20 @@ export default function ResourcePicker({
                   Cancel
                 </Button>
               </DialogClose>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={selectedResources.length === 0}
-              >
-                Save
+              <Button size="sm" onClick={handleSave} disabled={isSaving}>
+                {isSaving ? (
+                  <>
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-1 border-background mr-2"></div>
+                    Behandler...
+                  </>
+                ) : (
+                  <>
+                    Save{" "}
+                    {selectedResources.length > 0
+                      ? `(${selectedResources.length})`
+                      : ""}
+                  </>
+                )}
               </Button>
             </div>
           </div>

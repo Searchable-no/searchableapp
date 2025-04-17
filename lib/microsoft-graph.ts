@@ -2016,4 +2016,196 @@ export async function searchPlannerTasks(
     console.error('Error searching Planner tasks:', error);
     throw error;
   }
+}
+
+/**
+ * Downloads a file from SharePoint using Microsoft Graph API
+ * @param userId User ID for authentication
+ * @param fileId ID of the file to download
+ * @returns File content as ArrayBuffer
+ */
+export async function downloadSharePointFile(userId: string, fileUrl: string): Promise<ArrayBuffer> {
+  console.log(`Downloading file from SharePoint: ${fileUrl}`);
+  
+  try {
+    const accessToken = await getValidAccessToken(userId);
+    
+    // Try to fetch the file with the direct URL first
+    const response = await fetch(fileUrl, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      console.error(`Failed to download file with direct URL: ${response.status} ${response.statusText}`);
+      
+      // Try to get the filename from the URL
+      const fileName = fileUrl.split('/').pop() || '';
+      console.log(`Extracted filename: ${fileName}`);
+      
+      try {
+        console.log("Attempting to use Graph API client to download the file");
+        const graphClient = await getGraphClient(accessToken);
+        
+        // Try to get the file using search first
+        console.log(`Searching for file: "${fileName}"`);
+        const searchResponse = await graphClient
+          .api('/search/query')
+          .post({
+            requests: [{
+              entityTypes: ['driveItem'],
+              query: {
+                queryString: `filename:${fileName}`,
+              },
+              from: 0,
+              size: 10
+            }]
+          });
+        
+        if (searchResponse?.value?.[0]?.hitsContainers?.[0]?.hits?.length > 0) {
+          const hit = searchResponse.value[0].hitsContainers[0].hits[0];
+          const resource = hit.resource;
+          
+          console.log(`Found file in search results: ${resource.name}, ID: ${resource.id}`);
+          
+          // Get the file content using the drive and item IDs
+          if (resource.parentReference?.driveId && resource.id) {
+            console.log(`Getting file content using driveId: ${resource.parentReference.driveId} and itemId: ${resource.id}`);
+            
+            try {
+              // We need to use fetch directly when getting binary content
+              const graphEndpoint = `https://graph.microsoft.com/v1.0/drives/${resource.parentReference.driveId}/items/${resource.id}/content`;
+              const fileResponse = await fetch(graphEndpoint, {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`
+                }
+              });
+              
+              if (!fileResponse.ok) {
+                throw new Error(`Failed to fetch file content: ${fileResponse.status} ${fileResponse.statusText}`);
+              }
+              
+              const fileContent = await fileResponse.arrayBuffer();
+              console.log(`Successfully downloaded file using Graph API search result (${fileContent.byteLength} bytes)`);
+              return fileContent;
+            } catch (fetchError) {
+              console.error('Error fetching file content:', fetchError);
+              throw fetchError;
+            }
+          }
+        }
+        
+        // If searching didn't work and URL contains Shared Documents, try to use direct document path
+        if (fileUrl.includes('Shared Documents/')) {
+          console.log('Attempting to download from default document library');
+          
+          // Extract domain and file path
+          const urlObj = new URL(fileUrl);
+          const domain = urlObj.hostname; // e.g. searchableno.sharepoint.com
+          const siteName = domain.split('.')[0]; // e.g. searchableno
+          const filePath = decodeURIComponent(fileUrl.split('Shared Documents/')[1]);
+          
+          console.log(`Extracted domain: ${domain}, site name: ${siteName}, file path: ${filePath}`);
+          
+          // Try to get the root site
+          const rootSiteResponse = await graphClient
+            .api('/sites/root')
+            .get();
+          
+          console.log(`Found root site: ${rootSiteResponse.displayName}, ID: ${rootSiteResponse.id}`);
+          
+          // Get the default document library (Shared Documents)
+          const drivesResponse = await graphClient
+            .api(`/sites/${rootSiteResponse.id}/drives`)
+            .get();
+          
+          if (drivesResponse?.value?.length > 0) {
+            // Use the first drive (usually Shared Documents)
+            const defaultDriveId = drivesResponse.value[0].id;
+            console.log(`Found default drive ID: ${defaultDriveId}`);
+            
+            // Download the file using the file path
+            try {
+              // We need to use fetch directly when getting binary content
+              const graphEndpoint = `https://graph.microsoft.com/v1.0/drives/${defaultDriveId}/root:/${filePath}:/content`;
+              const fileResponse = await fetch(graphEndpoint, {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`
+                }
+              });
+              
+              if (!fileResponse.ok) {
+                throw new Error(`Failed to fetch file content from default library: ${fileResponse.status} ${fileResponse.statusText}`);
+              }
+              
+              const fileContent = await fileResponse.arrayBuffer();
+              console.log(`Successfully downloaded file from default document library (${fileContent.byteLength} bytes)`);
+              return fileContent;
+            } catch (fetchError) {
+              console.error('Error fetching file content from default library:', fetchError);
+              throw fetchError;
+            }
+          }
+        }
+        
+        // If we have a file ID, try to use the Graph API with site path
+        if (fileUrl.includes('/sites/') && fileUrl.includes('/Shared%20Documents/')) {
+          // Extract site ID and file path from URL
+          console.log('Attempting to extract site ID and file path from URL');
+          
+          const urlParts = fileUrl.split('/sites/')[1];
+          if (urlParts) {
+            const siteName = urlParts.split('/')[0];
+            const filePath = decodeURIComponent(fileUrl.split('Shared%20Documents/')[1]);
+            
+            console.log(`Extracted site name: ${siteName}, file path: ${filePath}`);
+            
+            // Get the site ID
+            const sites = await graphClient
+              .api('/sites')
+              .filter(`name eq '${siteName}'`)
+              .get();
+            
+            if (sites?.value && sites.value.length > 0) {
+              const siteId = sites.value[0].id;
+              console.log(`Found site ID: ${siteId}`);
+              
+              // Download the file using Graph API
+              try {
+                // We need to use fetch directly when getting binary content
+                const graphEndpoint = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/Shared Documents/${filePath}:/content`;
+                const fileResponse = await fetch(graphEndpoint, {
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                  }
+                });
+                
+                if (!fileResponse.ok) {
+                  throw new Error(`Failed to fetch file content from site: ${fileResponse.status} ${fileResponse.statusText}`);
+                }
+                
+                const fileContent = await fileResponse.arrayBuffer();
+                console.log(`Successfully downloaded file using Graph API with site path (${fileContent.byteLength} bytes)`);
+                return fileContent;
+              } catch (fetchError) {
+                console.error('Error fetching file content from site:', fetchError);
+                throw fetchError;
+              }
+            }
+          }
+        }
+      } catch (graphError) {
+        console.error('Error using Graph API to download file:', graphError);
+      }
+      
+      throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+    }
+    
+    console.log('Successfully downloaded file with direct URL');
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.error('Error downloading SharePoint file:', error);
+    throw error;
+  }
 } 
