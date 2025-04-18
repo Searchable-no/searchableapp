@@ -233,11 +233,12 @@ export default function Chat({
   };
 
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-background">
+    <div className="flex flex-col h-screen max-h-screen bg-gray-50">
       {/* Header */}
       {headerComponent}
 
-      <main className="flex-1 overflow-y-auto p-4">
+      {/* Messages area - Takes available space */}
+      <div className="flex-1 overflow-y-auto p-4">
         {/* Display error message if any */}
         {error && (
           <div className="bg-destructive/10 text-destructive p-3 rounded-md mb-4 flex items-start gap-2">
@@ -247,17 +248,17 @@ export default function Chat({
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto w-full">
-          <div className="max-w-5xl mx-auto px-4 py-4">
+        <div className="w-full">
+          <div className="max-w-3xl mx-auto">
             {/* Info component - only shown initially */}
             {messages.length <= 1 && !error && infoComponent}
 
-            <div className="space-y-10">
+            <div className="space-y-6">
               {messages.map((message, index) => (
                 <div key={index} className="w-full">
                   {message.role === "user" ? (
                     <div className="flex justify-end mb-2">
-                      <div className="bg-blue-50 border border-blue-100 rounded-md px-4 py-3 text-gray-800 max-w-[80%] shadow-sm">
+                      <div className="bg-[#5E5ADB] text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%] shadow-sm">
                         {message.attachments &&
                           message.attachments.length > 0 && (
                             <AttachedResources
@@ -271,10 +272,10 @@ export default function Chat({
                     </div>
                   ) : (
                     <div className="w-full">
-                      <div className="mb-2 text-sm text-gray-500 px-1">
+                      <div className="mb-2 text-sm font-medium text-gray-600 px-1">
                         {assistantName}
                       </div>
-                      <div className="bg-white border border-gray-100 rounded-md px-4 py-3 text-gray-800 shadow-sm pb-6 relative">
+                      <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-6 py-4 text-gray-800 shadow-sm pb-6 relative">
                         {message.content ? (
                           <div className="prose prose-sm max-w-none text-gray-800">
                             <ReactMarkdown
@@ -295,7 +296,7 @@ export default function Chat({
                                 ),
                                 h3: ({ ...props }) => (
                                   <h3
-                                    className="text-lg font-semibold mt-5 mb-3"
+                                    className="text-md font-semibold mt-5 mb-3"
                                     {...props}
                                   />
                                 ),
@@ -308,19 +309,28 @@ export default function Chat({
 
                                 // Style paragraphs
                                 p: ({ ...props }) => (
-                                  <p className="my-2" {...props} />
+                                  <p
+                                    className="my-3 leading-relaxed"
+                                    {...props}
+                                  />
                                 ),
 
                                 // Style lists
                                 ul: ({ ...props }) => (
-                                  <ul className="my-2 ml-2" {...props} />
+                                  <ul
+                                    className="my-3 ml-6 space-y-2 list-disc"
+                                    {...props}
+                                  />
                                 ),
                                 ol: ({ ...props }) => (
-                                  <ol className="my-2 ml-2" {...props} />
+                                  <ol
+                                    className="my-3 ml-6 space-y-2 list-decimal"
+                                    {...props}
+                                  />
                                 ),
                                 li: ({ children, ...props }) => {
                                   return (
-                                    <li className="my-1 ml-2" {...props}>
+                                    <li className="my-1" {...props}>
                                       {children}
                                     </li>
                                   );
@@ -330,7 +340,7 @@ export default function Chat({
                                 table: ({ ...props }) => (
                                   <div className="my-4 overflow-x-auto">
                                     <table
-                                      className="min-w-full divide-y divide-gray-200 border border-gray-200"
+                                      className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-md"
                                       {...props}
                                     />
                                   </div>
@@ -367,13 +377,13 @@ export default function Chat({
                                 code: ({ className, children, ...props }) => {
                                   return className?.includes("inline") ? (
                                     <code
-                                      className="px-1 py-0.5 bg-gray-100 rounded text-sm"
+                                      className="px-1 py-0.5 bg-gray-100 rounded text-sm font-mono"
                                       {...props}
                                     >
                                       {children}
                                     </code>
                                   ) : (
-                                    <pre className="p-3 bg-gray-50 rounded-md overflow-auto text-sm my-3">
+                                    <pre className="p-3 bg-gray-50 rounded-md overflow-auto text-sm my-3 font-mono">
                                       <code className={className} {...props}>
                                         {children}
                                       </code>
@@ -463,55 +473,141 @@ export default function Chat({
             <div ref={messagesEndRef} />
           </div>
         </div>
+      </div>
 
-        {/* Input area with attachment support */}
-        <div className="border-t bg-white py-3 w-full">
-          <div className="max-w-5xl mx-auto px-4">
-            {/* Attached resources display */}
-            <AnimatePresence>
-              {attachedResources.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="mb-3"
-                >
-                  <AttachedResources
-                    resources={attachedResources}
-                    onRemove={handleRemoveResource}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
+      {/* Input area with attachment support - Fixed at bottom */}
+      <div className="border-t bg-white py-4 w-full">
+        <div className="max-w-3xl mx-auto px-4">
+          {/* Attached resources display */}
+          <AnimatePresence>
+            {attachedResources.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mb-3"
+              >
+                <AttachedResources
+                  resources={attachedResources}
+                  onRemove={handleRemoveResource}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-            <form onSubmit={handleSubmit} className="relative">
+          <form onSubmit={handleSubmit} className="relative">
+            <div className="bg-white border rounded-3xl shadow-sm px-4 py-3 focus-within:ring-1 focus-within:ring-[#5E5ADB] border-gray-200">
               <Input
                 ref={inputRef}
                 type="text"
                 placeholder={placeholder}
-                className="w-full py-3 px-4 pr-24 border rounded-full shadow-sm focus:ring-1 focus:ring-gray-300"
+                className="w-full py-2 px-0 border-0 focus:ring-0 focus:outline-none text-sm bg-transparent"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 disabled={disabled || isLoading}
               />
-              <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
-                <button
-                  type="button"
-                  className="text-gray-400 hover:text-gray-600"
-                  onClick={() => setIsResourcePickerOpen(true)}
-                  disabled={disabled || isLoading}
-                >
-                  <Paperclip className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <Search className="h-4 w-4" />
-                </button>
+              <div className="flex justify-between items-center mt-1">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-gray-600 hover:text-gray-800 text-sm"
+                    onClick={() => setIsResourcePickerOpen(true)}
+                    disabled={disabled || isLoading}
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      className="h-4 w-4"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M21 14l-9 7-9-7m18-5l-9 7-9-7m18-5l-9 7-9-7"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span>Add</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-sm bg-[#C6F551] text-gray-800 font-medium px-3 py-1 rounded-full"
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                    >
+                      <path
+                        d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M12 8V16"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M8 12H16"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span>Web</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-gray-600 hover:text-gray-800 text-sm"
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                    >
+                      <path
+                        d="M3 6H21"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M7 12H17"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M10 18H14"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span>Filters</span>
+                  </button>
+                </div>
                 <Button
                   type="submit"
-                  className="rounded-full h-7 w-7 p-0 flex items-center justify-center bg-gray-800 hover:bg-gray-700 transition-colors"
+                  className="rounded-full h-9 w-9 p-0 flex items-center justify-center bg-gray-900 hover:bg-gray-800 transition-colors"
                   disabled={
                     (!input.trim() && attachedResources.length === 0) ||
                     disabled ||
@@ -519,26 +615,34 @@ export default function Chat({
                   }
                 >
                   {isLoading ? (
-                    <Loader2 className="h-3 w-3 animate-spin text-white" />
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
                   ) : (
-                    <Send className="h-3 w-3 text-white" />
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-5 w-5 text-white"
+                    >
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
                   )}
                 </Button>
               </div>
-            </form>
-            <div className="flex justify-between mt-3 text-xs text-gray-500">
-              <div className="flex items-center space-x-2">
-                <button className="p-1">
-                  <Plus className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="text-center">
-                AI assistants may produce inaccurate information.
-              </div>
+            </div>
+          </form>
+          <div className="flex justify-center mt-2 text-xs text-gray-500">
+            <div className="text-center">
+              AI assistants may produce inaccurate information.
             </div>
           </div>
         </div>
-      </main>
+      </div>
 
       {/* Resource Picker Dialog */}
       <ResourcePicker

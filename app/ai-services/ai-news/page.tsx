@@ -108,10 +108,12 @@ export default function AINewsPage() {
 
   // Header component
   const HeaderComponent = () => (
-    <div className="flex flex-col items-center text-center space-y-4 mb-4">
-      <Newspaper className="h-12 w-12 text-primary" />
+    <div className="flex flex-col items-center text-center space-y-3 pt-8 pb-6">
+      <div className="bg-[#5E5ADB]/10 p-4 rounded-full">
+        <Newspaper className="h-8 w-8 text-[#5E5ADB]" />
+      </div>
       <h1 className="text-2xl font-bold">AI Nyheter</h1>
-      <p className="text-muted-foreground max-w-2xl">
+      <p className="text-muted-foreground max-w-2xl text-sm">
         Få oppdateringer fra dine favorittkilder. Legg til nyhetskilder og still
         spørsmål om aktuelle nyheter.
       </p>
@@ -119,62 +121,64 @@ export default function AINewsPage() {
   );
 
   return (
-    <div className="container py-8 flex flex-col h-full gap-6">
-      {/* Sources Card */}
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle>Nyhetskilder</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Input
-              placeholder="https://www.example.com"
-              value={newSource}
-              onChange={(e) => setNewSource(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addSource()}
-              className="flex-1"
-            />
-            <Button
-              type="button"
-              onClick={addSource}
-              size="lg"
-              className="px-6 py-2 w-full sm:w-auto"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Legg til kilde
-            </Button>
-          </div>
-
-          {sources.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium">
-                Dine kilder ({sources.length}):
-              </h3>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {sources.map((source, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between rounded-md border p-2"
-                  >
-                    <span className="text-sm truncate">{source}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeSource(source)}
-                      className="h-8 w-8 p-0 text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
+    <div className="container h-screen flex flex-col overflow-hidden">
+      <div className="py-6">
+        {/* Sources Card */}
+        <Card className="w-full shadow-sm border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle>Nyhetskilder</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                placeholder="https://www.example.com"
+                value={newSource}
+                onChange={(e) => setNewSource(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addSource()}
+                className="flex-1 bg-gray-50 border-gray-200"
+              />
+              <Button
+                type="button"
+                onClick={addSource}
+                size="default"
+                className="px-6 py-2 w-full sm:w-auto gap-2 bg-[#5E5ADB]"
+              >
+                <Plus className="h-4 w-4" />
+                Legg til kilde
+              </Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+
+            {sources.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">
+                  Dine kilder ({sources.length}):
+                </h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto rounded-md bg-gray-50 p-2">
+                  {sources.map((source, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between rounded-md bg-white border p-2"
+                    >
+                      <span className="text-sm truncate">{source}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeSource(source)}
+                        className="h-8 w-8 p-0 text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Chat Interface */}
-      <div className="flex-1">
+      <div className="flex-1 overflow-hidden">
         <Chat
           messages={messages}
           onSubmit={handleChatSubmit}

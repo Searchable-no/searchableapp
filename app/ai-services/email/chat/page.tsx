@@ -503,7 +503,7 @@ export default function EmailChatPage() {
   const renderEmailContent = () => {
     if (emailThread && emailThread.length > 0) {
       return (
-        <div className="fixed top-[76px] right-4 z-10 bg-muted/30 p-3 rounded-lg mb-4 max-h-[300px] overflow-y-auto w-[350px] shadow-md">
+        <div className="fixed top-[76px] right-4 z-10 bg-muted/30 p-3 rounded-lg mb-4 max-h-[500px] overflow-y-auto w-[450px] shadow-md">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-medium">
               E-posttråd ({emailThread.length} e-poster)
@@ -535,7 +535,7 @@ export default function EmailChatPage() {
                 </div>
                 <div className="text-sm font-medium mt-1">{email.subject}</div>
                 <div
-                  className="text-xs text-muted-foreground mt-1 line-clamp-3"
+                  className="text-xs text-muted-foreground mt-1 line-clamp-5"
                   dangerouslySetInnerHTML={{
                     __html:
                       email.body?.contentType.includes("html") &&
@@ -551,7 +551,7 @@ export default function EmailChatPage() {
       );
     } else if (storedEmail) {
       return (
-        <div className="fixed top-[76px] right-4 z-10 bg-muted/30 p-3 rounded-lg mb-4 max-h-[300px] overflow-y-auto w-[350px] shadow-md">
+        <div className="fixed top-[76px] right-4 z-10 bg-muted/30 p-3 rounded-lg mb-4 max-h-[500px] overflow-y-auto w-[450px] shadow-md">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-medium">E-post</h3>
             <Button
