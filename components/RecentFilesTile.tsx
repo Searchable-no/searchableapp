@@ -11,7 +11,8 @@ import {
   Presentation,
   FileCode,
   FileImage,
-  Archive
+  Archive,
+  RefreshCw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ interface RecentFilesTileProps {
   files: RecentFile[];
   isLoading: boolean;
   isCachedData?: boolean;
+  onRefresh?: () => Promise<void>;
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -126,27 +128,44 @@ function getFileIcon(filename: string) {
   }
 }
 
-export function RecentFilesTile({ files, isLoading, isCachedData = false }: RecentFilesTileProps) {
+export function RecentFilesTile({ 
+  files, 
+  isLoading, 
+  isCachedData = false,
+  onRefresh 
+}: RecentFilesTileProps) {
   const [selectedFile, setSelectedFile] = useState<RecentFile | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing || !onRefresh) return;
+    
+    try {
+      setIsRefreshing(true);
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   if (isLoading) {
     return (
       <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
-        <CardHeader className="py-1.5 px-2.5 border-b flex-none">
+        <CardHeader className="py-1 px-2 border-b flex-none">
           <CardTitle className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="p-1 rounded-md bg-primary/10">
+            <div className="flex items-center gap-1">
+              <div className="p-0.5 rounded-md bg-primary/10">
                 <FileText className="h-3 w-3 text-primary" />
               </div>
               <span>Recent Files</span>
             </div>
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-2 flex-1">
-          <div className="space-y-3">
-            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
-            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
-            <div className="h-16 animate-pulse rounded-lg bg-muted/60"></div>
+        <CardContent className="p-1.5 flex-1 overflow-hidden">
+          <div className="space-y-1.5">
+            <div className="h-14 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-14 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-14 animate-pulse rounded-lg bg-muted/60"></div>
           </div>
         </CardContent>
       </Card>
@@ -159,13 +178,13 @@ export function RecentFilesTile({ files, isLoading, isCachedData = false }: Rece
       isCachedData && "border-dashed"
     )}>
       <CardHeader className={cn(
-        "py-1.5 px-2.5 border-b flex-none",
+        "py-1 px-2 border-b flex-none",
         isCachedData && "bg-muted/20"
       )}>
         <CardTitle className="flex items-center justify-between text-xs">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <div className={cn(
-              "p-1 rounded-md bg-primary/10",
+              "p-0.5 rounded-md bg-primary/10",
               isCachedData && "bg-muted/30"
             )}>
               <FileText className={cn(
@@ -173,68 +192,82 @@ export function RecentFilesTile({ files, isLoading, isCachedData = false }: Rece
                 isCachedData && "text-muted-foreground"
               )} />
             </div>
-            <span>Recent Files</span>
+            <span className="truncate">Recent Files</span>
             {isCachedData && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-muted/30 text-muted-foreground ml-1">
+              <span className="text-[8px] px-1 py-0.5 rounded-sm bg-muted/30 text-muted-foreground ml-0.5 hidden sm:inline-block">
                 Cached
               </span>
             )}
           </div>
-          {files.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs px-2 rounded-md hover:bg-muted/50"
-              onClick={() =>
-                window.open("https://www.office.com/launch/files", "_blank")
-              }
-            >
-              Open OneDrive
-              <ChevronRight className="ml-1 h-2 w-2" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {onRefresh && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 rounded-full hover:bg-muted/50"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
+                <span className="sr-only">Refresh</span>
+              </Button>
+            )}
+            {files.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 text-[10px] px-1.5 rounded-md hover:bg-muted/50"
+                onClick={() =>
+                  window.open("https://www.office.com/launch/files", "_blank")
+                }
+              >
+                OneDrive
+                <ChevronRight className="ml-0.5 h-2 w-2" />
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-2 flex-1 overflow-y-auto">
+      <CardContent className="p-1.5 flex-1 overflow-y-auto">
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <FileText className="h-6 w-6 mb-2 opacity-50" />
+            <FileText className="h-5 w-5 mb-1.5 opacity-50" />
             <p className="text-xs">No recent files</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {files.map((file) => {
               const fileName = getFileNameWithoutExtension(file.name);
               return (
                 <div
                   key={file.id}
-                  className="group p-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                  className="group px-1.5 py-1 rounded-md border hover:bg-accent/30 cursor-pointer transition-colors"
                   onClick={() => setSelectedFile(file)}
                 >
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-1.5">
                     {getFileIcon(file.name)}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start justify-between gap-1">
                         <div>
                           <p className="text-xs font-medium truncate">
                             {fileName}
                           </p>
-                          <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              <span>
+                          <div className="flex flex-wrap items-center gap-1 mt-0.5 text-[9px] text-muted-foreground">
+                            <div className="flex items-center gap-0.5">
+                              <Clock className="h-2.5 w-2.5" />
+                              <span className="truncate">
                                 {formatDate(file.lastModifiedDateTime)}
                               </span>
                             </div>
-                            <div className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
+                            <div className="flex items-center gap-0.5 truncate max-w-[100px]">
+                              <User className="h-2.5 w-2.5 shrink-0" />
                               <span className="truncate">
                                 {file.lastModifiedBy.user.displayName}
                               </span>
                             </div>
                           </div>
                         </div>
-                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                        <span className="text-[9px] text-muted-foreground whitespace-nowrap ml-1">
                           {formatFileSize(file.size)}
                         </span>
                       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ListTodo, ChevronRight, RotateCw } from "lucide-react";
+import { ListTodo, ChevronRight, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PlannerTask } from "@/lib/microsoft-graph";
@@ -154,12 +154,12 @@ export function PlannerTile({
           <div className="flex items-center gap-1.5">
             <Button
               variant="ghost"
-              size="icon"
-              className="h-6 w-6 rounded-md hover:bg-muted/50"
+              size="sm"
+              className="h-6 w-6 p-0 rounded-full hover:bg-muted/50"
               onClick={performRefresh}
               disabled={isRefreshing || isRefreshingTile}
             >
-              <RotateCw
+              <RefreshCw
                 className={cn("h-3 w-3", (isRefreshing || isRefreshingTile) && "animate-spin")}
               />
               <span className="sr-only">Refresh tasks</span>

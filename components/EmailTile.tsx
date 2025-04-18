@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Mail, RotateCw, ExternalLink } from "lucide-react";
+import { Mail, RotateCw, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect, useMemo } from "react";
 import { EmailMessage } from "@/lib/microsoft-graph";
@@ -24,7 +24,7 @@ interface EmailTileProps {
   refreshInterval?: number;
   isCachedData?: boolean;
   onEmailClick?: (email: EmailMessage) => void;
-  onRefresh?: () => Promise<boolean>;
+  onRefresh?: () => Promise<void>;
 }
 
 // Define EmailThread type
@@ -342,6 +342,7 @@ export function EmailTile({
   const [expandedThreads, setExpandedThreads] = useState<
     Record<string, boolean>
   >({});
+  const [refreshing, setRefreshing] = useState(false);
 
   // Group emails into conversation threads
   const emailThreads = useMemo<EmailThread[]>(() => {
@@ -408,73 +409,35 @@ export function EmailTile({
     }));
   };
 
-  const { isRefreshing, lastRefreshed, refresh } = useAutoRefresh({
-    refreshInterval,
-    onRefresh: async () => {
-      try {
-        // If custom refresh handler is provided, use it
-        if (onRefresh) {
-          const success = await onRefresh();
-          if (success) {
-            return;
-          }
-          // If the custom refresh fails, fall back to the default behavior
-        }
-
-        const response = await fetch("/api/emails/recent");
-
-        // Check if the response is OK before trying to parse JSON
-        if (!response.ok) {
-          console.error(
-            `Error response from server: ${response.status} ${response.statusText}`
-          );
-          // Try to read the error as JSON if possible
-          try {
-            const errorData = await response.json();
-            console.error("Error details:", errorData);
-          } catch {
-            console.error("Could not parse error response as JSON");
-          }
-          throw new Error(
-            `Failed to fetch emails: ${response.status} ${response.statusText}`
-          );
-        }
-
-        // Now try to parse the JSON response
-        const data = await response.json();
-
-        // Validate the response structure
-        if (!data || !Array.isArray(data.emails)) {
-          console.error("Invalid response format:", data);
-          throw new Error("Invalid response format from server");
-        }
-
-        setEmails(data.emails || []);
-      } catch (error) {
-        console.error("Error refreshing emails:", error);
-        // Don't update the emails state on error to preserve the existing data
-      }
-    },
-  });
+  const handleRefresh = async () => {
+    if (refreshing || !onRefresh) return;
+    
+    try {
+      setRefreshing(true);
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (isLoading) {
     return (
-      <Card className="h-full bg-gradient-to-br from-background to-muted/50">
-        <CardHeader className="py-1.5 px-2.5 border-b flex-none">
+      <Card className="h-full bg-gradient-to-br from-background to-muted/50 flex flex-col">
+        <CardHeader className="py-1 px-2 border-b flex-none">
           <CardTitle className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="p-1 rounded-md bg-primary/10">
+            <div className="flex items-center gap-1">
+              <div className="p-0.5 rounded-md bg-primary/10">
                 <Mail className="h-3 w-3 text-primary" />
               </div>
               <span>Email Threads</span>
             </div>
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-2 flex-1">
-          <div className="space-y-2">
-            <div className="h-12 animate-pulse rounded-lg bg-muted/60"></div>
-            <div className="h-12 animate-pulse rounded-lg bg-muted/60"></div>
-            <div className="h-12 animate-pulse rounded-lg bg-muted/60"></div>
+        <CardContent className="p-1.5 flex-1 overflow-hidden">
+          <div className="space-y-1.5">
+            <div className="h-10 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-10 animate-pulse rounded-lg bg-muted/60"></div>
+            <div className="h-10 animate-pulse rounded-lg bg-muted/60"></div>
           </div>
         </CardContent>
       </Card>
@@ -490,15 +453,15 @@ export function EmailTile({
     >
       <CardHeader
         className={cn(
-          "py-1.5 px-2.5 border-b flex-none",
+          "py-1 px-2 border-b flex-none",
           isCachedData && "bg-muted/20"
         )}
       >
         <CardTitle className="flex items-center justify-between text-xs">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <div
               className={cn(
-                "p-1 rounded-md bg-primary/10",
+                "p-0.5 rounded-md bg-primary/10",
                 isCachedData && "bg-muted/30"
               )}
             >
@@ -509,94 +472,94 @@ export function EmailTile({
                 )}
               />
             </div>
-            <span>Email Threads</span>
+            <span className="truncate">Email Threads</span>
             {isCachedData && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-muted/30 text-muted-foreground ml-1">
+              <span className="text-[8px] px-1 py-0.5 rounded-sm bg-muted/30 text-muted-foreground ml-0.5 hidden sm:inline-block">
                 Cached
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">
-              Updated {formatDistanceToNow(lastRefreshed)} ago
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 rounded-md"
-              onClick={() => refresh()}
-              disabled={isRefreshing}
-            >
-              <RotateCw
-                className={cn("h-3 w-3", isRefreshing && "animate-spin")}
-              />
-            </Button>
+          <div className="flex items-center gap-1">
+            {onRefresh && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 rounded-full hover:bg-muted/50"
+                onClick={handleRefresh}
+                disabled={refreshing}
+              >
+                <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+                <span className="sr-only">Refresh</span>
+              </Button>
+            )}
+            {emailThreads.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 text-[10px] px-1.5 rounded-md hover:bg-muted/50"
+                onClick={() => window.open("https://outlook.office.com/mail", "_blank")}
+              >
+                Outlook
+                <ExternalLink className="ml-0.5 h-2 w-2" />
+              </Button>
+            )}
           </div>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-2 flex-1 overflow-y-auto">
+      <CardContent className="p-1.5 flex-1 overflow-y-auto">
         {emailThreads.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <Mail className="h-6 w-6 mb-2 opacity-50" />
+            <Mail className="h-5 w-5 mb-1.5 opacity-50" />
             <p className="text-xs">No recent emails</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {displayThreads.map((thread) => (
-              <div key={thread.id} className="space-y-1">
+              <div key={thread.id} className="space-y-0.5">
                 <EmailThreadDialog
                   thread={thread}
                   onEmailRead={handleEmailRead}
                 >
                   <div
                     className={cn(
-                      "p-2 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors",
-                      thread.hasUnread && "bg-primary/5 hover:bg-primary/10",
-                      isCachedData && "opacity-90"
+                      "rounded-md border px-2 py-1.5 hover:bg-accent transition-colors cursor-pointer",
+                      thread.hasUnread && "bg-accent/40 hover:bg-accent/50 border-accent-foreground/10"
                     )}
                   >
-                    <div className="flex items-start justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <h3
-                              className={cn(
-                                "text-xs truncate",
-                                thread.hasUnread && "font-semibold"
-                              )}
-                            >
-                              {thread.subject || "(No subject)"}
-                              <span className="text-xs text-muted-foreground ml-1">
-                                ({thread.emails.length})
-                              </span>
-                            </h3>
-                            {thread.hasUnread && (
-                              <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
+                    <div className="flex justify-between items-start gap-1">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <h3
+                            className={cn(
+                              "text-xs font-medium line-clamp-1",
+                              thread.hasUnread && "font-semibold"
                             )}
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {thread.latestEmail.from?.emailAddress?.name ||
-                              thread.latestEmail.from?.emailAddress?.address ||
-                              "Unknown Sender"}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            {formatDistanceToNow(
-                              new Date(thread.latestEmail.receivedDateTime)
-                            )}
-                          </p>
+                          >
+                            {thread.subject}
+                          </h3>
+                          {thread.hasUnread && (
+                            <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary" />
+                          )}
                         </div>
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {thread.latestEmail.from?.emailAddress?.name ||
+                            thread.latestEmail.from?.emailAddress?.address ||
+                            "Unknown"}
+                        </p>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleThread(thread.id);
-                        }}
-                      >
-                        {expandedThreads[thread.id] ? "Collapse" : "Expand"}
-                      </Button>
+                      <div className="flex flex-col items-end">
+                        <span className="text-[9px] text-muted-foreground whitespace-nowrap">
+                          {formatDistanceToNow(
+                            new Date(thread.latestEmail.receivedDateTime)
+                          )}{" "}
+                          ago
+                        </span>
+                        {thread.emails.length > 1 && (
+                          <span className="text-[9px] px-1 py-0.5 bg-muted/30 rounded-sm">
+                            {thread.emails.length}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </EmailThreadDialog>

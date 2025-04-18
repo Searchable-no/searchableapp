@@ -2,7 +2,7 @@
 
 import { TeamsChannelMessage } from "@/lib/microsoft-graph";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MessageSquare, ChevronRight, ExternalLink } from "lucide-react";
+import { MessageSquare, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { TeamsMessageDialog } from "@/components/TeamsMessageDialog";
@@ -13,6 +13,7 @@ interface TeamsChannelTileProps {
   messages: TeamsChannelMessage[];
   isLoading: boolean;
   isCachedData?: boolean;
+  onRefresh?: () => Promise<void>;
 }
 
 function formatMessageContent(content: string): string {
@@ -52,12 +53,25 @@ export function TeamsChannelTile({
   messages,
   isLoading,
   isCachedData = false,
+  onRefresh,
 }: TeamsChannelTileProps) {
   const [showAll, setShowAll] = useState(false);
   const [selectedMessage, setSelectedMessage] =
     useState<TeamsChannelMessage | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const displayMessages = showAll ? messages : messages.slice(0, 5);
   const groupedMessages = groupMessagesByTeam(displayMessages);
+
+  const handleRefresh = async () => {
+    if (isRefreshing || !onRefresh) return;
+    
+    try {
+      setIsRefreshing(true);
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -110,19 +124,33 @@ export function TeamsChannelTile({
               </span>
             )}
           </div>
-          {messages.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs px-2 rounded-md hover:bg-muted/50"
-              onClick={() =>
-                window.open("https://teams.microsoft.com", "_blank")
-              }
-            >
-              Open Teams
-              <ChevronRight className="ml-1 h-2 w-2" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {onRefresh && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 rounded-full hover:bg-muted/50"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
+                <span className="sr-only">Refresh</span>
+              </Button>
+            )}
+            {messages.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs px-2 rounded-md hover:bg-muted/50"
+                onClick={() =>
+                  window.open("https://teams.microsoft.com", "_blank")
+                }
+              >
+                Open Teams
+                <ChevronRight className="ml-1 h-2 w-2" />
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-2 flex-1 overflow-y-auto">

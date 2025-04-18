@@ -1,22 +1,42 @@
 "use client";
 
 import { useState } from "react";
-import { Calendar as CalendarIcon, Video } from "lucide-react";
+import { Calendar as CalendarIcon, Video, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
 import { CalendarEvent } from "@/lib/microsoft-graph";
 import { CalendarEventDialog } from "@/components/CalendarEventDialog";
+import { cn } from "@/lib/utils";
 
 interface CalendarTileProps {
   events: CalendarEvent[];
   isLoading: boolean;
+  isCachedData?: boolean;
+  onRefresh?: () => Promise<void>;
 }
 
-export function CalendarTile({ events, isLoading }: CalendarTileProps) {
+export function CalendarTile({ 
+  events, 
+  isLoading, 
+  isCachedData, 
+  onRefresh 
+}: CalendarTileProps) {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(
     null
   );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing || !onRefresh) return;
+    
+    try {
+      setIsRefreshing(true);
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -51,23 +71,42 @@ export function CalendarTile({ events, isLoading }: CalendarTileProps) {
               <CalendarIcon className="h-3.5 w-3.5 text-primary" />
             </div>
             <span>Calendar</span>
+            {isCachedData && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-muted-foreground/20 text-muted-foreground">
+                Cached
+              </span>
+            )}
           </div>
-          {events.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs px-2 rounded-md hover:bg-muted/50"
-              onClick={() =>
-                window.open(
-                  "https://outlook.office.com/calendar/view/day",
-                  "_blank"
-                )
-              }
-            >
-              Open Calendar
-              <CalendarIcon className="ml-1 h-2 w-2" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {onRefresh && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 rounded-full hover:bg-muted/50"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+                <span className="sr-only">Refresh</span>
+              </Button>
+            )}
+            {events.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs px-2 rounded-md hover:bg-muted/50"
+                onClick={() =>
+                  window.open(
+                    "https://outlook.office.com/calendar/view/day",
+                    "_blank"
+                  )
+                }
+              >
+                Open Calendar
+                <CalendarIcon className="ml-1 h-2 w-2" />
+              </Button>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 flex-1 overflow-y-auto">

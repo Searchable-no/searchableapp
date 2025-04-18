@@ -76,8 +76,8 @@ export async function POST(request: NextRequest) {
     console.log(`Attempting to share file "${fileName}" to ${teamsEntityId}`);
     
     // Sjekk hvilken type entitet som er valgt (chat, team eller kanal)
-    if (teamsEntityId.includes(':')) {
-      // Dette er en kanal (team:channel format)
+    if (teamsEntityId.includes(':') && !teamsEntityId.includes('@thread')) {
+      // Dette er en kanal (team:channel format) - IKKE en gruppechat som inneholder både : og @thread
       // Split only at the first colon since channel IDs can contain colons themselves
       const firstColonIndex = teamsEntityId.indexOf(':');
       const teamId = teamsEntityId.substring(0, firstColonIndex);
@@ -156,8 +156,8 @@ export async function POST(request: NextRequest) {
         { status: 200 }
       )
     } else {
-      // Dette kunne være en chat eller en ugyldig ID
-      console.log(`Sharing to entity with ID: ${teamsEntityId}`);
+      // Dette er en chat (kan være en-til-en eller gruppechat)
+      console.log(`Sharing to chat with ID: ${teamsEntityId}`);
       
       // Check if this could be a team ID that's missing a channel reference
       if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(teamsEntityId)) {

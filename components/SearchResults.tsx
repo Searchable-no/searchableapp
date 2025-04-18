@@ -32,6 +32,10 @@ import {
   FileImage,
   Archive,
   Calendar,
+  ExternalLink,
+  Plus,
+  AlertTriangle,
+  Copy,
 } from "lucide-react";
 import { formatFileSize } from "@/lib/utils";
 import {
@@ -52,6 +56,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FolderTree, buildFolderTree } from "@/components/FolderTree";
+import { NewChatDialog } from '@/components/NewChatDialog'
+import React from "react";
+import { debounce } from "lodash";
 
 // Helper function to determine source based on type and path
 function getSource(result: SharePointSearchResult): string {
@@ -366,6 +373,12 @@ export function SearchResults({
   // For success/error messages
   const [sharingSuccess, setSharingSuccess] = useState<string | null>(null);
   const [sharingError, setSharingError] = useState<string | null>(null);
+
+  // Add state for the new chat dialog
+  const [isNewChatDialogOpen, setIsNewChatDialogOpen] = useState(false);
+
+  // Legg til state for å håndtere API-tillatelsesmangler
+  const [hasTeamsApiPermissions, setHasTeamsApiPermissions] = useState(true);
 
   // Extract folder paths and build folder tree
   const getFolderPaths = useCallback(
@@ -761,11 +774,21 @@ export function SearchResults({
 
   // Load user's Teams when component mounts
   useEffect(() => {
+    let isMounted = true;
+    
     async function loadUserTeams() {
       console.log(
         "Loading Teams",
         selectedFile ? "with file selected" : "no file selected"
       );
+
+      if (!isMounted) return;
+      
+      // Sjekk om det allerede er lastingsprosess
+      if (isLoadingTeams) {
+        console.log("Avbryter lasting: Allerede i gang");
+        return;
+      }
 
       setIsLoadingTeams(true);
       let successfullyLoadedTeams = false;
@@ -796,15 +819,17 @@ export function SearchResults({
             type: "team" as const,
           }));
 
-          setAvailableTeams(formattedTeams);
-          console.log(`Lastet ${formattedTeams.length} teams`);
+          if (isMounted) {
+            setAvailableTeams(formattedTeams);
+            console.log(`Lastet ${formattedTeams.length} teams`);
 
-          // Mark that we successfully loaded teams
-          successfullyLoadedTeams = formattedTeams.length > 0;
+            // Mark that we successfully loaded teams
+            successfullyLoadedTeams = formattedTeams.length > 0;
 
-          // Also load recent chats for quick access
-          if (formattedTeams.length > 0) {
-            setTeamsEntities(formattedTeams);
+            // Also load recent chats for quick access
+            if (formattedTeams.length > 0) {
+              setTeamsEntities(formattedTeams);
+            }
           }
         } else {
           console.warn(
@@ -817,80 +842,146 @@ export function SearchResults({
       }
 
       // Load chats regardless of whether teams loaded successfully
-      try {
-        console.log("Fetching recent chats...");
-        const chatsResponse = await fetch(`/api/teams/chats`);
+      // Men bare hvis komponenten fortsatt er montert
+      if (isMounted) {
+        try {
+          console.log("Fetching recent chats...");
+          const chatsResponse = await fetch(`/api/teams/chats`, {
+            // Legger til cache-control for å hindre unødvendige kall
+            headers: {
+              'Cache-Control': 'max-age=60'
+            }
+          });
 
-        if (chatsResponse.ok) {
-          const chatsData = await chatsResponse.json();
+          if (chatsResponse.ok) {
+            const chatsData = await chatsResponse.json();
 
-          if (chatsData && chatsData.chats && Array.isArray(chatsData.chats)) {
-            console.log(`Found ${chatsData.chats.length} chats`);
+            if (chatsData && chatsData.chats && Array.isArray(chatsData.chats)) {
+              console.log(`Found ${chatsData.chats.length} chats`);
 
-            const formattedChats = chatsData.chats.map(
-              (chat: MicrosoftChat) => {
-                console.log("Processing chat ID:", chat.id);
+              const formattedChats = chatsData.chats.map(
+                (chat: MicrosoftChat) => {
+                  // Fjerner unødvendig logging
+                  // Validate chat ID format - should start with digits and colon
+                  const isValidChatId = /^\d+:/.test(chat.id);
+                  if (!isValidChatId) {
+                    console.warn(`Invalid chat ID format detected: ${chat.id}`);
+                  }
 
-                // Validate chat ID format - should start with digits and colon
-                const isValidChatId = /^\d+:/.test(chat.id);
-                if (!isValidChatId) {
-                  console.warn(`Invalid chat ID format detected: ${chat.id}`);
+                  return {
+                    id: chat.id,
+                    displayName: chat.topic || "Chat",
+                    type: "chat" as const,
+                  };
                 }
-
-                return {
-                  id: chat.id,
-                  displayName: chat.topic || "Chat",
-                  type: "chat" as const,
-                };
-              }
-            );
-
-            // Add recent chats to existing teams or as the only options
-            if (formattedChats.length > 0) {
-              setTeamsEntities((prevEntities) => [
-                ...prevEntities,
-                ...formattedChats,
-              ]);
-              console.log(
-                `Added ${formattedChats.length} chats to sharing options`
               );
 
-              // If we didn't load any teams but found chats, we consider this successful
-              if (!successfullyLoadedTeams) {
-                successfullyLoadedTeams = true;
+              // Add recent chats to existing teams or as the only options
+              if (isMounted && formattedChats.length > 0) {
+                setTeamsEntities((prevEntities) => [
+                  ...prevEntities,
+                  ...formattedChats,
+                ]);
+                console.log(
+                  `Added ${formattedChats.length} chats to sharing options`
+                );
+
+                // If we didn't load any teams but found chats, we consider this successful
+                if (!successfullyLoadedTeams) {
+                  successfullyLoadedTeams = true;
+                }
               }
             }
+          } else {
+            console.warn(`Failed to fetch chats: ${chatsResponse.status}`);
           }
-        } else {
-          console.warn(`Failed to fetch chats: ${chatsResponse.status}`);
+        } catch (error) {
+          console.error("Error fetching chats:", error);
         }
-      } catch (error) {
-        console.error("Error fetching chats:", error);
       }
 
       // Set error message if we couldn't load any sharing options
-      if (!successfullyLoadedTeams) {
-        setSharingError(
-          "Kunne ikke laste team eller chatter. Sjekk tilkoblingen din til Microsoft 365."
-        );
-      } else {
-        setSharingError(null);
-      }
+      if (isMounted) {
+        if (!successfullyLoadedTeams) {
+          setSharingError(
+            "Kunne ikke laste team eller chatter. Sjekk tilkoblingen din til Microsoft 365."
+          );
+        } else {
+          setSharingError(null);
+        }
 
-      setIsLoadingTeams(false);
+        setIsLoadingTeams(false);
+      }
     }
 
-    // Load teams when the dialog is opened
-    if (selectedFile) {
+    // Load teams when the dialog is opened - but only if teams/chats haven't already been loaded
+    if (selectedFile && availableTeams.length === 0) {
       loadUserTeams();
     }
-  }, [selectedFile]);
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedFile, availableTeams.length, isLoadingTeams]);
 
-  // Function to search Teams chats and channels
+  // Modifiser searchTeamsEntities-funksjonen for å bruke chats-endepunktet konsekvent
   const searchTeamsEntities = async (searchTerm: string) => {
+    // Avbryt hvis vi allerede laster inn eller hvis vi har samme søketerm
+    if (isLoadingTeams) {
+      console.log("Avbryter søk: Allerede i gang med å laste");
+      return;
+    }
+    
+    // Sjekk om vi har samme søketerm som sist og allerede viser resultater
+    if (teamsSearchTerm === searchTerm && teamsEntities.length > 0) {
+      console.log("Avbryter søk: Samme søketerm og har allerede resultater");
+      return;
+    }
+
     if (!searchTerm.trim()) {
-      // Hvis søketermen er tom, vis alle tilgjengelige teams
-      setTeamsEntities(availableTeams);
+      // Hvis søketermen er tom og vi har availableTeams, vis dem
+      if (availableTeams.length > 0) {
+        setTeamsEntities([...availableTeams]); // Start med teams
+      }
+      
+      // Hent chatter bare hvis vi ikke allerede har gjort det
+      if (availableTeams.length > 0 && teamsEntities.length === availableTeams.length) {
+        console.log("Skipper chat-henting: Allerede vist teams og ingen søk");
+        return;
+      }
+      
+      try {
+        console.log("Fetching all chats for empty search term...");
+        setIsLoadingTeams(true);
+        const chatsResponse = await fetch(`/api/teams/chats`, {
+          // Legger til cache-control for å hindre unødvendige kall
+          headers: {
+            'Cache-Control': 'max-age=60'
+          }
+        });
+        
+        if (chatsResponse.ok) {
+          const chatsData = await chatsResponse.json();
+          
+          if (chatsData && chatsData.chats && Array.isArray(chatsData.chats)) {
+            const formattedChats = chatsData.chats.map((chat: MicrosoftChat) => ({
+              id: chat.id,
+              displayName: chat.topic || 'Chat',
+              type: 'chat' as const
+            }));
+            
+            console.log(`Fant ${formattedChats.length} chatter på tomt søk`);
+            
+            // Legg til chatter
+            setTeamsEntities(prev => [...prev, ...formattedChats]);
+          }
+        }
+        setIsLoadingTeams(false);
+      } catch (error) {
+        console.error("Error fetching all chats:", error);
+        setIsLoadingTeams(false);
+      }
+      
       return;
     }
 
@@ -898,167 +989,167 @@ export function SearchResults({
     setSharingError(null);
 
     try {
-      // Filtrerer tilgjengelige teams basert på søkeordet
+      // 1. Filtrerer tilgjengelige teams basert på søkeordet
       const filteredTeams = availableTeams.filter(
-        (team) =>
-          team.displayName &&
-          team.displayName.toLowerCase().includes(searchTerm.toLowerCase())
+        team => team.displayName && team.displayName.toLowerCase().includes(searchTerm.toLowerCase())
       );
-
-      // Hvis vi har teams som matcher, hent kanalene for disse
+      
+      // Hold rede på alle matchende entiteter
       let allResults: TeamsEntity[] = [...filteredTeams];
-
-      // Hent kanaler for hvert team som matcher
-      for (const team of filteredTeams) {
-        try {
-          console.log(`Fetching channels for team ${team.id}`);
-          const channelsResponse = await fetch(
-            `/api/teams/channels?teamId=${team.id}`
-          );
-
-          if (channelsResponse.ok) {
-            const channelsData = await channelsResponse.json();
-            console.log(
-              `Got ${channelsData?.channels?.length || 0} channels for team ${
-                team.id
-              }`
-            );
-
-            if (
-              channelsData &&
-              channelsData.channels &&
-              Array.isArray(channelsData.channels)
-            ) {
-              const teamChannels = channelsData.channels
-                .filter(
-                  (channel: MicrosoftChannel) =>
-                    channel.displayName &&
-                    channel.displayName
-                      .toLowerCase()
-                      .includes(searchTerm.toLowerCase())
-                )
-                .map((channel: MicrosoftChannel) => ({
-                  id: `${team.id}:${channel.id}`,
-                  displayName: `${team.displayName} > ${
-                    channel.displayName || "Unnamed Channel"
-                  }`,
-                  teamId: team.id,
-                  channelId: channel.id,
-                  type: "channel" as const,
-                }));
-
-              allResults = [...allResults, ...teamChannels];
-              console.log(`Added ${teamChannels.length} channels to results`);
-            }
-          } else {
-            console.warn(
-              `Failed to fetch channels for team ${team.id}: ${channelsResponse.status}`
-            );
-          }
-        } catch (error) {
-          console.error(
-            `Feil ved henting av kanaler for team ${team.id}:`,
-            error
-          );
-        }
-      }
-
-      // Hent også chats som matcher søket
+      
+      // 2. Hent chatter som matcher søket
       try {
         console.log(`Searching for chats with query: ${searchTerm}`);
-        const chatsResponse = await fetch(
-          `/api/teams/chats?query=${encodeURIComponent(searchTerm)}`
-        );
-
+        const chatsResponse = await fetch(`/api/teams/chats?query=${encodeURIComponent(searchTerm)}`, {
+          // Legger til cache-control for å hindre unødvendige kall
+          headers: {
+            'Cache-Control': 'max-age=60'
+          }
+        });
+        
         if (chatsResponse.ok) {
           const chatsData = await chatsResponse.json();
-          console.log(`Found ${chatsData?.chats?.length || 0} matching chats`);
-
+          
           if (chatsData && chatsData.chats && Array.isArray(chatsData.chats)) {
-            const formattedChats = chatsData.chats.map(
-              (chat: MicrosoftChat) => {
-                console.log("Processing chat ID:", chat.id);
-
-                // Validate chat ID format - should start with digits and colon
-                const isValidChatId = /^\d+:/.test(chat.id);
-                if (!isValidChatId) {
-                  console.warn(`Invalid chat ID format detected: ${chat.id}`);
-                }
-
-                return {
-                  id: chat.id,
-                  displayName: chat.topic || "Chat",
-                  type: "chat" as const,
-                };
-              }
-            );
-
+            console.log(`Fant ${chatsData.chats.length} chatter som matcher søket`);
+            
+            const formattedChats = chatsData.chats.map((chat: MicrosoftChat) => ({
+              id: chat.id,
+              displayName: chat.topic || 'Chat',
+              type: 'chat' as const
+            }));
+            
+            // Legg til chatter i resultatene
             allResults = [...allResults, ...formattedChats];
-            console.log(`Added ${formattedChats.length} chats to results`);
           }
         } else {
           console.warn(`Failed to fetch chats: ${chatsResponse.status}`);
         }
       } catch (error) {
-        console.error("Feil ved henting av chats:", error);
+        console.error("Error searching for chats:", error);
       }
-
+      
+      // 3. Begrense kanalsøk til maks 3 team for å unngå for mange samtidige requester
+      const teamLimit = Math.min(filteredTeams.length, 3);
+      const limitedTeams = filteredTeams.slice(0, teamLimit);
+      
+      // 3. Hent kanaler for team som matcher søket
+      for (const team of limitedTeams) {
+        try {
+          console.log(`Searching for channels in team ${team.id}`);
+          const channelsResponse = await fetch(`/api/teams/channels?teamId=${team.id}`);
+          
+          if (channelsResponse.ok) {
+            const channelsData = await channelsResponse.json();
+            
+            if (channelsData && channelsData.channels && Array.isArray(channelsData.channels)) {
+              const matchingChannels = channelsData.channels
+                .filter((channel: MicrosoftChannel) => 
+                  channel.displayName.toLowerCase().includes(searchTerm.toLowerCase())
+                )
+                .map((channel: MicrosoftChannel) => ({
+                  id: `${team.id}:${channel.id}`,
+                  displayName: `${team.displayName} > ${channel.displayName}`,
+                  type: 'channel' as const
+                }));
+              
+              console.log(`Fant ${matchingChannels.length} kanaler i team ${team.displayName}`);
+              
+              // Legg til kanaler i resultatene
+              allResults = [...allResults, ...matchingChannels];
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching channels for team ${team.id}:`, error);
+        }
+      }
+      
+      // Oppdater state med samlede resultater
+      console.log(`Totalt ${allResults.length} resultater funnet for søket "${searchTerm}"`);
       setTeamsEntities(allResults);
-      console.log(`Total search results: ${allResults.length}`);
+      
     } catch (error) {
       console.error("Error searching Teams entities:", error);
-      setSharingError("Failed to search Teams entities");
+      setSharingError("Feil ved søk etter Teams-enheter");
     } finally {
       setIsLoadingTeams(false);
     }
   };
 
-  // Oppdater søkeresultater når søkestrengen endres
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (selectedFile) {
-        searchTeamsEntities(teamsSearchTerm);
-      }
-    }, 500);
+  // Lag en debounced versjon av searchTeamsEntities funksjonen
+  // Dette begrenser hvor ofte den kalles ved hurtig input
+  const debouncedSearchTeamsEntities = React.useCallback(
+    debounce((searchTerm: string) => {
+      searchTeamsEntities(searchTerm);
+    }, 800), // Øk til 800ms debounce tid
+    [availableTeams, searchTeamsEntities] // Oppdater funksjonen når availableTeams eller searchTeamsEntities endres
+  );
 
-    return () => clearTimeout(timer);
-  }, [teamsSearchTerm, selectedFile, availableTeams]);
+  // Bruk debouncedSearchTeamsEntities i useEffect hook
+  React.useEffect(() => {
+    // Bare kjør søket hvis vi faktisk har en fil valgt og søketermen er endret
+    if (selectedFile && !isLoadingTeams) {
+      // Setter en timeout for å unngå flere samtidige kall
+      const timer = setTimeout(() => {
+        if (!teamsSearchTerm.trim()) {
+          searchTeamsEntities("");
+        } else {
+          debouncedSearchTeamsEntities(teamsSearchTerm);
+        }
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [selectedFile, teamsSearchTerm, debouncedSearchTeamsEntities, isLoadingTeams]);
 
-  // Function to share file to Teams
-  const shareToTeams = async () => {
-    if (!selectedFile || !selectedTeamsEntity) {
-      setSharingError("Please select a Teams chat or channel");
+  // Modifiser handleChatCreated for å håndtere tillatelsesmangler
+  const handleChatCreated = (chatId: string, chatName: string) => {
+    // Close the dialog
+    setIsNewChatDialogOpen(false);
+    
+    // Sjekk om vi har tillatelser til å bruke API
+    if (!hasTeamsApiPermissions) {
+      // Vis alternativ delingsmetode hvis vi ikke har tillatelser
+      setSelectedTeamsEntity(null);
+      setSharingSuccess("Teams-API er ikke tilgjengelig. Bruk alternativ delingsmetode nedenfor.");
+      setTimeout(() => setSharingSuccess(null), 5000);
       return;
     }
+    
+    // Fortsett som normalt hvis vi har tillatelser
+    const newChat: TeamsEntity = {
+      id: chatId,
+      displayName: chatName,
+      type: "chat"
+    };
+    
+    setTeamsEntities(prev => [newChat, ...prev]);
+    setSelectedTeamsEntity(chatId);
+    
+    setSharingSuccess("Ny chat opprettet");
+    setTimeout(() => setSharingSuccess(null), 3000);
+  };
 
-    setSharingError(null);
-    setIsLoadingTeams(true);
-
-    try {
-      const response = await fetch("/api/teams/share", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fileUrl: selectedFile.webUrl,
-          fileName: selectedFile.name,
-          teamsEntityId: selectedTeamsEntity,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to share to Teams");
-      }
-
-      setSharingSuccess("Successfully shared to Teams");
-      setTimeout(() => setSharingSuccess(null), 3000);
-    } catch (error) {
-      console.error("Error sharing to Teams:", error);
-      setSharingError("Failed to share to Teams");
-    } finally {
-      setIsLoadingTeams(false);
+  // Legg til en alternativ delingsmetode for Teams når API mangler tillatelser
+  const shareToTeamsViaLink = () => {
+    if (!selectedFile) {
+      setSharingError("Velg en fil først");
+      return;
     }
+    
+    if (!selectedFile.webUrl) {
+      setSharingError("Filen har ingen delingslenke");
+      return;
+    }
+    
+    // Opprett en Teams deep link for deling
+    const teamsShareUrl = `https://teams.microsoft.com/l/chat/0/0?url=${encodeURIComponent(selectedFile.webUrl)}&text=${encodeURIComponent(`Jeg deler filen "${selectedFile.name}" med deg.`)}`;
+    
+    // Åpne Teams-vinduet for deling
+    window.open(teamsShareUrl, '_blank');
+    
+    setSharingSuccess("Teams åpnet i ny fane");
+    setTimeout(() => setSharingSuccess(null), 3000);
   };
 
   // Function to share file via email
@@ -1175,6 +1266,82 @@ Vennlig hilsen`);
       const formattedEntityId = `${selectedTeam.id}:${channel.id}`;
       console.log(`Setting formatted channel ID: ${formattedEntityId}`);
       setSelectedTeamsEntity(formattedEntityId);
+    }
+  };
+
+  // Legg til shareToTeams funksjonen som ble fjernet
+  const shareToTeams = async () => {
+    if (!selectedFile || !selectedTeamsEntity) {
+      setSharingError("Velg en Teams chat eller kanal");
+      return;
+    }
+
+    setSharingError(null);
+    setIsLoadingTeams(true);
+
+    try {
+      const response = await fetch("/api/teams/share", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileUrl: selectedFile.webUrl,
+          fileName: selectedFile.name,
+          teamsEntityId: selectedTeamsEntity,
+        }),
+      });
+
+      if (!response.ok) {
+        // Sjekk om dette er en tilgangsfeil
+        const data = await response.json();
+        if (response.status === 403 && data?.authError) {
+          setHasTeamsApiPermissions(false);
+          throw new Error("Mangler tillatelser til å dele via Teams API");
+        } else {
+          throw new Error("Kunne ikke dele til Teams");
+        }
+      }
+
+      setSharingSuccess("Delt til Teams");
+      setTimeout(() => setSharingSuccess(null), 3000);
+    } catch (error) {
+      console.error("Error sharing to Teams:", error);
+      setSharingError("Kunne ikke dele til Teams");
+    } finally {
+      setIsLoadingTeams(false);
+    }
+  };
+
+  const [copied, setCopied] = useState(false);
+
+  // Function to copy text to clipboard
+  const copyToClipboard = (text: string) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(
+        () => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        },
+        (err) => {
+          console.error('Could not copy text: ', err);
+        }
+      );
+    } else {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Could not copy text: ', err);
+      }
+      document.body.removeChild(textArea);
     }
   };
 
@@ -1487,7 +1654,7 @@ Vennlig hilsen`);
                 </DropdownMenu>
               </div>
 
-              <div>Relevance</div>
+              <div>Link</div>
             </div>
 
             {/* Add a global filter reset if any filters are active */}
@@ -1544,25 +1711,45 @@ Vennlig hilsen`);
                     {getSource(result as SharePointSearchResult)}
                   </div>
                   <div>
-                    {result.score !== undefined && (
-                      <div className="relative w-16 h-2 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className="absolute top-0 left-0 h-full bg-primary rounded-full"
-                          style={{
-                            width: `${
-                              result.score > 180
-                                ? 100
-                                : result.score > 120
-                                ? 85
-                                : result.score > 70
-                                ? 65
-                                : result.score > 30
-                                ? 45
-                                : 25
-                            }%`,
-                          }}
-                        />
-                      </div>
+                    {(result.webUrl || "title" in result && result.webUrl) ? (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="px-2 py-1 h-auto text-xs text-primary flex items-center gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          
+                          // For Planner tasks, open the URL directly
+                          if (result.type === "planner" && result.webUrl) {
+                            window.open(result.webUrl, "_blank", "noopener,noreferrer");
+                            return;
+                          }
+                          
+                          // For documents, open in the web viewer
+                          const fileResult = result as SharePointSearchResult;
+                          if (fileResult.webUrl) {
+                            // For SharePoint documents, ensure we open in the web viewer
+                            const url = new URL(fileResult.webUrl);
+                            
+                            // If it's a SharePoint URL, modify it to ensure it opens in the web view
+                            if (url.hostname.includes('sharepoint.com')) {
+                              // SharePoint web viewer URLs typically end with ?web=1
+                              if (!url.searchParams.has('web')) {
+                                url.searchParams.set('web', '1');
+                              }
+                              window.open(url.toString(), "_blank", "noopener,noreferrer");
+                            } else {
+                              // For other URLs, open directly
+                              window.open(fileResult.webUrl, "_blank", "noopener,noreferrer");
+                            }
+                          }
+                        }}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        <span>Åpne</span>
+                      </Button>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">Ingen lenke</span>
                     )}
                   </div>
                 </div>
@@ -1697,6 +1884,34 @@ Vennlig hilsen`);
                         {selectedFile?.path || "—"}
                       </dd>
                     </div>
+                    <div>
+                      <dt className="text-muted-foreground">URL</dt>
+                      <dd className="font-medium break-all flex items-start gap-2">
+                        {selectedFile?.webUrl ? (
+                          <>
+                            <a 
+                              href={selectedFile.webUrl} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline cursor-pointer flex-grow"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                window.open(selectedFile.webUrl, "_blank");
+                              }}
+                            >
+                              {selectedFile.webUrl}
+                            </a>
+                            <button
+                              className={`flex-shrink-0 p-1 rounded-md hover:bg-muted transition-colors ${copied ? 'text-green-500' : 'text-muted-foreground'}`}
+                              onClick={() => selectedFile?.webUrl && copyToClipboard(selectedFile.webUrl)}
+                              title="Copy URL to clipboard"
+                            >
+                              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                            </button>
+                          </>
+                        ) : "—"}
+                      </dd>
+                    </div>
                   </dl>
                 </div>
 
@@ -1768,165 +1983,201 @@ Vennlig hilsen`);
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button className="w-full" variant="secondary">
-                        <MessageSquareText className="h-4 w-4 mr-2" /> Share to
-                        Teams
+                        <MessageSquareText className="h-4 w-4 mr-2" /> Del til Teams
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="w-72">
                       <div className="p-2">
-                        <Input
-                          placeholder="Søk etter chat eller kanal..."
-                          className="h-8 mb-2"
-                          value={teamsSearchTerm}
-                          onChange={(e) => setTeamsSearchTerm(e.target.value)}
-                        />
+                        {!hasTeamsApiPermissions ? (
+                          // Vis enkel deling når vi mangler API-tillatelser
+                          <div className="space-y-3">
+                            <div className="text-sm pb-2 text-muted-foreground">
+                              <AlertTriangle className="h-3.5 w-3.5 inline-block mr-1 text-amber-500" />
+                              Teams API-tillatelser mangler. Bruk direkte link-deling i stedet.
+                            </div>
+                            <Button 
+                              size="sm" 
+                              className="w-full"
+                              onClick={shareToTeamsViaLink}
+                            >
+                              <Share className="h-3 w-3 mr-1" /> Del via Teams-link
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <Input
+                              placeholder="Søk etter chat eller kanal..."
+                              className="h-8 mb-2"
+                              value={teamsSearchTerm}
+                              onChange={(e) => setTeamsSearchTerm(e.target.value)}
+                            />
 
-                        {/* Show channels if a team is selected */}
-                        {selectedTeam && teamChannels && (
-                          <div className="mb-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-medium">
-                                {selectedTeam.displayName}
-                              </span>
+                            {/* Show channels if a team is selected */}
+                            {selectedTeam && teamChannels && (
+                              <div className="mb-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-xs font-medium">
+                                    {selectedTeam.displayName}
+                                  </span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => {
+                                      setSelectedTeam(null);
+                                      setTeamChannels(null);
+                                      setSelectedChannel(null);
+                                    }}
+                                  >
+                                    Back
+                                  </Button>
+                                </div>
+
+                                {teamChannels.isLoading ? (
+                                  <div className="py-2 flex justify-center">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  </div>
+                                ) : teamChannels.channels.length > 0 ? (
+                                  <div className="max-h-48 overflow-y-auto space-y-1">
+                                    {teamChannels.channels.map((channel) => (
+                                      <div
+                                        key={channel.id}
+                                        className={`flex items-center px-2 py-1.5 rounded text-sm cursor-pointer ${
+                                          selectedTeamsEntity ===
+                                          `${selectedTeam.id}:${channel.id}`
+                                            ? "bg-primary/10 text-primary"
+                                            : "hover:bg-muted"
+                                        }`}
+                                        onClick={() =>
+                                          handleChannelSelection(channel)
+                                        }
+                                      >
+                                        <Hash className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                        <span className="truncate">
+                                          {channel.displayName}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="py-2 text-center text-sm text-muted-foreground">
+                                    No channels found for this team.
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* If no team is selected, show team/chat list */}
+                            {!selectedTeam && (
+                              <>
+                                <div className="text-xs text-muted-foreground mb-2">
+                                  {isLoadingTeams ? (
+                                    <div className="flex items-center">
+                                      <Loader2 className="h-3 w-3 animate-spin mr-1" />{" "}
+                                      Søker...
+                                    </div>
+                                  ) : teamsEntities.length > 0 ? (
+                                    "Velg team, chat eller kanal"
+                                  ) : (
+                                    "Sist brukt"
+                                  )}
+                                </div>
+
+                                {isLoadingTeams ? (
+                                  <div className="py-2 text-center text-sm">
+                                    <Loader2 className="h-4 w-4 animate-spin mx-auto" />
+                                  </div>
+                                ) : teamsEntities.length > 0 ? (
+                                  <div className="max-h-48 overflow-y-auto space-y-1">
+                                    {teamsEntities.map((entity) => (
+                                      <div
+                                        key={entity.id}
+                                        className={`flex items-center px-2 py-1.5 rounded text-sm cursor-pointer ${
+                                          selectedTeamsEntity === entity.id
+                                            ? "bg-primary/10 text-primary"
+                                            : "hover:bg-muted"
+                                        }`}
+                                        onClick={() => handleTeamSelection(entity)}
+                                      >
+                                        {entity.type === "team" ? (
+                                          <Users className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                        ) : entity.type === "chat" ? (
+                                          <MessageSquare className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                        ) : (
+                                          <Hash className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                        )}
+                                        <span className="truncate">
+                                          {entity.displayName}
+                                        </span>
+                                      </div>
+                                    ))}
+                                    
+                                    {/* Add the Create New Chat button */}
+                                    <div
+                                      className="flex items-center justify-center px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-muted border-t mt-2 pt-2 text-primary"
+                                      onClick={() => setIsNewChatDialogOpen(true)}
+                                    >
+                                      <Plus className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                      <span>Opprett ny chat</span>
+                                    </div>
+                                  </div>
+                                ) : teamsSearchTerm ? (
+                                  <div className="py-2 text-center text-sm text-muted-foreground">
+                                    Ingen teams eller kanaler funnet med søkeordet.
+                                  </div>
+                                ) : availableTeams.length > 0 ? (
+                                  <div className="max-h-48 overflow-y-auto space-y-1">
+                                    {availableTeams.map((team) => (
+                                      <div
+                                        key={team.id}
+                                        className={`flex items-center px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-muted`}
+                                        onClick={() => handleTeamSelection(team)}
+                                      >
+                                        <Users className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                        <span className="truncate">
+                                          {team.displayName}
+                                        </span>
+                                      </div>
+                                    ))}
+                                    
+                                    {/* Add the Create New Chat button */}
+                                    <div
+                                      className="flex items-center justify-center px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-muted border-t mt-2 pt-2 text-primary"
+                                      onClick={() => setIsNewChatDialogOpen(true)}
+                                    >
+                                      <Plus className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
+                                      <span>Opprett ny chat</span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="py-2 text-center text-sm text-muted-foreground">
+                                    Ingen teams funnet.
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            <div className="mt-3 text-center">
                               <Button
-                                variant="ghost"
                                 size="sm"
-                                className="h-6 px-2 text-xs"
-                                onClick={() => {
-                                  setSelectedTeam(null);
-                                  setTeamChannels(null);
-                                  setSelectedChannel(null);
-                                }}
+                                className="w-full"
+                                onClick={shareToTeams}
+                                disabled={!selectedTeamsEntity || isLoadingTeams}
                               >
-                                Back
+                                {isLoadingTeams ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin mr-1" />{" "}
+                                    Deler...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Share className="h-3 w-3 mr-1" /> Del link
+                                  </>
+                                )}
                               </Button>
                             </div>
-
-                            {teamChannels.isLoading ? (
-                              <div className="py-2 flex justify-center">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              </div>
-                            ) : teamChannels.channels.length > 0 ? (
-                              <div className="max-h-48 overflow-y-auto space-y-1">
-                                {teamChannels.channels.map((channel) => (
-                                  <div
-                                    key={channel.id}
-                                    className={`flex items-center px-2 py-1.5 rounded text-sm cursor-pointer ${
-                                      selectedTeamsEntity ===
-                                      `${selectedTeam.id}:${channel.id}`
-                                        ? "bg-primary/10 text-primary"
-                                        : "hover:bg-muted"
-                                    }`}
-                                    onClick={() =>
-                                      handleChannelSelection(channel)
-                                    }
-                                  >
-                                    <Hash className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
-                                    <span className="truncate">
-                                      {channel.displayName}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="py-2 text-center text-sm text-muted-foreground">
-                                No channels found for this team.
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* If no team is selected, show team/chat list */}
-                        {!selectedTeam && (
-                          <>
-                            <div className="text-xs text-muted-foreground mb-2">
-                              {isLoadingTeams ? (
-                                <div className="flex items-center">
-                                  <Loader2 className="h-3 w-3 animate-spin mr-1" />{" "}
-                                  Søker...
-                                </div>
-                              ) : teamsEntities.length > 0 ? (
-                                "Velg team, chat eller kanal"
-                              ) : (
-                                "Sist brukt"
-                              )}
-                            </div>
-
-                            {isLoadingTeams ? (
-                              <div className="py-2 text-center text-sm">
-                                <Loader2 className="h-4 w-4 animate-spin mx-auto" />
-                              </div>
-                            ) : teamsEntities.length > 0 ? (
-                              <div className="max-h-48 overflow-y-auto space-y-1">
-                                {teamsEntities.map((entity) => (
-                                  <div
-                                    key={entity.id}
-                                    className={`flex items-center px-2 py-1.5 rounded text-sm cursor-pointer ${
-                                      selectedTeamsEntity === entity.id
-                                        ? "bg-primary/10 text-primary"
-                                        : "hover:bg-muted"
-                                    }`}
-                                    onClick={() => handleTeamSelection(entity)}
-                                  >
-                                    {entity.type === "team" ? (
-                                      <Users className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
-                                    ) : entity.type === "chat" ? (
-                                      <MessageSquare className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
-                                    ) : (
-                                      <Hash className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
-                                    )}
-                                    <span className="truncate">
-                                      {entity.displayName}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : teamsSearchTerm ? (
-                              <div className="py-2 text-center text-sm text-muted-foreground">
-                                Ingen teams eller kanaler funnet med søkeordet.
-                              </div>
-                            ) : availableTeams.length > 0 ? (
-                              <div className="max-h-48 overflow-y-auto space-y-1">
-                                {availableTeams.map((team) => (
-                                  <div
-                                    key={team.id}
-                                    className={`flex items-center px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-muted`}
-                                    onClick={() => handleTeamSelection(team)}
-                                  >
-                                    <Users className="h-3.5 w-3.5 mr-2 flex-shrink-0" />
-                                    <span className="truncate">
-                                      {team.displayName}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="py-2 text-center text-sm text-muted-foreground">
-                                Ingen teams funnet.
-                              </div>
-                            )}
                           </>
                         )}
-
-                        <div className="mt-3 text-center">
-                          <Button
-                            size="sm"
-                            className="w-full"
-                            onClick={shareToTeams}
-                            disabled={!selectedTeamsEntity || isLoadingTeams}
-                          >
-                            {isLoadingTeams ? (
-                              <>
-                                <Loader2 className="h-3 w-3 animate-spin mr-1" />{" "}
-                                Deler...
-                              </>
-                            ) : (
-                              <>
-                                <Share className="h-3 w-3 mr-1" /> Del link
-                              </>
-                            )}
-                          </Button>
-                        </div>
                       </div>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -1961,6 +2212,13 @@ Vennlig hilsen`);
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Add the NewChatDialog */}
+      <NewChatDialog 
+        isOpen={isNewChatDialogOpen}
+        onClose={() => setIsNewChatDialogOpen(false)}
+        onChatCreated={handleChatCreated}
+      />
     </>
   );
 }

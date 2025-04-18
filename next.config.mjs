@@ -86,7 +86,17 @@ const nextConfig = withPWA({
         }
       }
     }
-  ]
+  ],
+  // Add custom next.js configurations
+  async redirects() {
+    return [
+      {
+        source: '/',
+        destination: '/dashboard',
+        permanent: true,
+      },
+    ]
+  },
 });
 
 export default nextConfig;

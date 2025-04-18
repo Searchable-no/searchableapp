@@ -18,7 +18,7 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getSession()
 
   // List of paths that don't require authentication
-  const publicPaths = ['/login', '/auth/callback', '/api/reindex']
+  const publicPaths = ['/login', '/auth/callback', '/api/reindex', '/icon-192x192.png', '/icon-512x512.png', '/manifest.json']
 
   // Check if the path is public
   const isPublicPath = publicPaths.some(publicPath => path.startsWith(publicPath))
@@ -33,6 +33,11 @@ export async function middleware(request: NextRequest) {
   // If the user is signed in and trying to access login, redirect to search
   if (session && path === '/login') {
     return NextResponse.redirect(new URL('/search', request.url))
+  }
+
+  // Set cache control headers for dashboard
+  if (path === '/dashboard') {
+    response.headers.set('Cache-Control', 'no-store, must-revalidate')
   }
 
   return response

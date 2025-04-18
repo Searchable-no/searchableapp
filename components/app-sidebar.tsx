@@ -21,10 +21,15 @@ import {
   FileAudio,
   Mail,
   Newspaper,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 
 type NavItemChild = {
   title: string;
@@ -65,6 +70,9 @@ const navigation: NavItem[] = [
 // Admin navigation item that will be conditionally added
 const adminNavItem: NavItem = { title: "Admin", href: "/admin", icon: Shield };
 
+// Local storage key for sidebar collapsed state
+const SIDEBAR_STATE_KEY = "sidebar:collapsed";
+
 export function AppSidebar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -73,7 +81,24 @@ export function AppSidebar() {
   const { session } = useSession();
   const [navItems, setNavItems] = useState([...navigation]);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const [collapsed, setCollapsed] = useState<boolean>(false);
   const supabase = createClientComponentClient();
+
+  // Load collapsed state from localStorage on mount
+  useEffect(() => {
+    const storedState = localStorage.getItem(SIDEBAR_STATE_KEY);
+    if (storedState) {
+      setCollapsed(storedState === "true");
+    }
+    setMounted(true);
+  }, []);
+
+  // Toggle collapsed state
+  const toggleCollapsed = () => {
+    const newState = !collapsed;
+    setCollapsed(newState);
+    localStorage.setItem(SIDEBAR_STATE_KEY, String(newState));
+  };
 
   // Check if AI Services section should be expanded based on current path
   useEffect(() => {
@@ -182,45 +207,134 @@ export function AppSidebar() {
   };
 
   return (
-    <div className="flex h-full w-[220px] flex-col bg-sidebar border-r border-sidebar-border">
-      <div className="flex items-center gap-2 p-4 border-b border-sidebar-border">
-        <div className="relative h-8 w-8 overflow-hidden rounded-lg bg-gradient-to-br from-primary/20 to-primary/10">
-          <img
-            src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Searchable-oEMTymeOqXxqDzlBGz8NHto1b6GOs0.png"
-            alt="Avatar"
-            className="h-full w-full object-cover"
-          />
+    <TooltipProvider>
+      <div 
+        className={cn(
+          "flex h-full flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out relative",
+          collapsed ? "w-[60px]" : "w-[220px]"
+        )}
+      >
+        {/* Collapse/Expand Toggle Button */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute -right-3 top-[72px] h-6 w-6 rounded-full bg-sidebar border border-sidebar-border z-10 shadow-md"
+          onClick={toggleCollapsed}
+        >
+          {collapsed ? (
+            <ChevronsRight className="h-3 w-3 text-sidebar-foreground/60" />
+          ) : (
+            <ChevronsLeft className="h-3 w-3 text-sidebar-foreground/60" />
+          )}
+        </Button>
+      
+        {/* Header with user info */}
+        <div className={cn(
+          "flex items-center gap-2 p-4 border-b border-sidebar-border overflow-hidden",
+          collapsed && "justify-center"
+        )}>
+          <div className="relative h-8 w-8 overflow-hidden rounded-lg bg-gradient-to-br from-primary/20 to-primary/10 flex-shrink-0">
+            <img
+              src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Searchable-oEMTymeOqXxqDzlBGz8NHto1b6GOs0.png"
+              alt="Avatar"
+              className="h-full w-full object-cover"
+            />
+          </div>
+          {!collapsed && (
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-sidebar-foreground">
+                {session.user.email?.split("@")[0] || "User"}
+              </span>
+              <span className="text-[10px] text-sidebar-foreground/60">
+                {session.user.email}
+              </span>
+            </div>
+          )}
         </div>
-        <div className="flex flex-col">
-          <span className="text-xs font-semibold text-sidebar-foreground">
-            {session.user.email?.split("@")[0] || "User"}
-          </span>
-          <span className="text-[10px] text-sidebar-foreground/60">
-            {session.user.email}
-          </span>
-        </div>
-      </div>
 
-      <nav className="flex-1 space-y-0.5 p-3">
-        {navItems.map((item) => {
-          const isActive =
-            pathname === item.href || pathname.startsWith(item.href + "/");
-          const hasChildren = !!item.children && item.children.length > 0;
-          const isExpanded = expandedItems.includes(item.href);
+        {/* Navigation Links */}
+        <nav className={cn("flex-1 space-y-0.5 p-3", collapsed && "items-center")}>
+          {navItems.map((item) => {
+            const isActive =
+              pathname === item.href || pathname.startsWith(item.href + "/");
+            const hasChildren = !!item.children && item.children.length > 0;
+            const isExpanded = expandedItems.includes(item.href);
 
-          return (
-            <React.Fragment key={item.href}>
-              {hasChildren ? (
-                <div>
-                  <button
-                    onClick={() => toggleExpand(item.href)}
-                    className={`group flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
-                      isActive
-                        ? "bg-sidebar-accent text-sidebar-primary"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
+            if (hasChildren && !collapsed) {
+              return (
+                <React.Fragment key={item.href}>
+                  <div>
+                    <button
+                      onClick={() => toggleExpand(item.href)}
+                      className={`group flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                        isActive
+                          ? "bg-sidebar-accent text-sidebar-primary"
+                          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <item.icon
+                          className={`h-4 w-4 transition-colors ${
+                            isActive
+                              ? "text-sidebar-primary"
+                              : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
+                          }`}
+                        />
+                        {item.title}
+                      </span>
+                      {isExpanded ? (
+                        <ChevronDown className="h-3 w-3 text-sidebar-foreground/60" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3 text-sidebar-foreground/60" />
+                      )}
+                    </button>
+
+                    {isExpanded && item.children && (
+                      <div className="ml-4 mt-1 space-y-1">
+                        {item.children.map((child) => {
+                          const isChildActive =
+                            pathname === child.href ||
+                            pathname.startsWith(child.href + "/");
+                          return (
+                            <Link
+                              key={child.href}
+                              href={child.href}
+                              className={`group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                                isChildActive
+                                  ? "bg-sidebar-accent text-sidebar-primary"
+                                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
+                              }`}
+                            >
+                              <child.icon
+                                className={`h-4 w-4 transition-colors ${
+                                  isChildActive
+                                    ? "text-sidebar-primary"
+                                    : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
+                                }`}
+                              />
+                              {child.title}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </React.Fragment>
+              );
+            } else {
+              return (
+                <Tooltip key={item.href} delayDuration={collapsed ? 300 : 999999}>
+                  <TooltipTrigger asChild>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        "group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all",
+                        isActive
+                          ? "bg-sidebar-accent text-sidebar-primary"
+                          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50",
+                        collapsed && "justify-center px-2"
+                      )}
+                    >
                       <item.icon
                         className={`h-4 w-4 transition-colors ${
                           isActive
@@ -228,99 +342,80 @@ export function AppSidebar() {
                             : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
                         }`}
                       />
+                      {!collapsed && item.title}
+                    </Link>
+                  </TooltipTrigger>
+                  {collapsed && (
+                    <TooltipContent side="right" className="text-xs">
                       {item.title}
-                    </span>
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3 text-sidebar-foreground/60" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3 text-sidebar-foreground/60" />
-                    )}
-                  </button>
-
-                  {isExpanded && item.children && (
-                    <div className="ml-4 mt-1 space-y-1">
-                      {item.children.map((child) => {
-                        const isChildActive =
-                          pathname === child.href ||
-                          pathname.startsWith(child.href + "/");
-                        return (
-                          <Link
-                            key={child.href}
-                            href={child.href}
-                            className={`group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
-                              isChildActive
-                                ? "bg-sidebar-accent text-sidebar-primary"
-                                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
-                            }`}
-                          >
-                            <child.icon
-                              className={`h-4 w-4 transition-colors ${
-                                isChildActive
-                                  ? "text-sidebar-primary"
-                                  : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
-                              }`}
-                            />
-                            {child.title}
-                          </Link>
-                        );
-                      })}
-                    </div>
+                      {hasChildren && " (Menu)"}
+                    </TooltipContent>
                   )}
-                </div>
-              ) : (
-                <Link
-                  href={item.href}
-                  className={`group flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-all ${
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-primary"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50"
-                  }`}
+                </Tooltip>
+              );
+            }
+          })}
+        </nav>
+
+        {/* Footer with theme toggle and logout */}
+        <div className={cn(
+          "border-t border-sidebar-border p-3 space-y-0.5",
+          collapsed && "flex flex-col items-center"
+        )}>
+          {mounted && (
+            <Tooltip delayDuration={collapsed ? 300 : 999999}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => {
+                    const newTheme = theme === "light" ? "dark" : "light";
+                    setTheme(newTheme);
+                    // Store in localStorage as a backup
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("theme", newTheme);
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors w-full",
+                    collapsed && "justify-center px-2"
+                  )}
                 >
-                  <item.icon
-                    className={`h-4 w-4 transition-colors ${
-                      isActive
-                        ? "text-sidebar-primary"
-                        : "text-sidebar-foreground/60 group-hover:text-sidebar-foreground/80"
-                    }`}
-                  />
-                  {item.title}
-                </Link>
+                  {theme === "light" ? (
+                    <Moon className="h-4 w-4 text-sidebar-foreground/60" />
+                  ) : (
+                    <Sun className="h-4 w-4 text-sidebar-foreground/60" />
+                  )}
+                  {!collapsed && (theme === "light" ? "Dark mode" : "Light mode")}
+                </button>
+              </TooltipTrigger>
+              {collapsed && (
+                <TooltipContent side="right" className="text-xs">
+                  {theme === "light" ? "Dark mode" : "Light mode"}
+                </TooltipContent>
               )}
-            </React.Fragment>
-          );
-        })}
-      </nav>
+            </Tooltip>
+          )}
 
-      <div className="border-t border-sidebar-border p-3 space-y-0.5">
-        {mounted && (
-          <button
-            onClick={() => {
-              const newTheme = theme === "light" ? "dark" : "light";
-              setTheme(newTheme);
-              // Store in localStorage as a backup
-              if (typeof window !== "undefined") {
-                localStorage.setItem("theme", newTheme);
-              }
-            }}
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
-          >
-            {theme === "light" ? (
-              <Moon className="h-4 w-4 text-sidebar-foreground/60" />
-            ) : (
-              <Sun className="h-4 w-4 text-sidebar-foreground/60" />
+          <Tooltip delayDuration={collapsed ? 300 : 999999}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleLogout}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors w-full",
+                  collapsed && "justify-center px-2"
+                )}
+              >
+                <LogOut className="h-4 w-4 text-sidebar-foreground/60" />
+                {!collapsed && "Logout"}
+              </button>
+            </TooltipTrigger>
+            {collapsed && (
+              <TooltipContent side="right" className="text-xs">
+                Logout
+              </TooltipContent>
             )}
-            {theme === "light" ? "Dark mode" : "Light mode"}
-          </button>
-        )}
-
-        <button
-          onClick={handleLogout}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 transition-colors"
-        >
-          <LogOut className="h-4 w-4 text-sidebar-foreground/60" />
-          Logout
-        </button>
+          </Tooltip>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
