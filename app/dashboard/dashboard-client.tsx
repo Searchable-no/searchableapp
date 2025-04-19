@@ -1457,7 +1457,11 @@ export function DashboardClient() {
                 className={cn("h-4 w-4", refreshing && "animate-spin")}
               />
             </Button>
-            <NotificationBell />
+            <NotificationBell 
+              emails={data.emails || []}
+              teamsMessages={data.teamsMessages || []}
+              channelMessages={data.channelMessages || []}
+            />
             <DashboardPreferences
               userId={user.id}
               onPreferencesChange={handlePreferencesChange}

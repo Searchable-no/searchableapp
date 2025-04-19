@@ -45,31 +45,17 @@ export function NotificationBell({
   const [isGeneratingAISummary, setIsGeneratingAISummary] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
 
-  const [localEmails, setLocalEmails] = useState(emails);
-  const [localTeamsMessages, setLocalTeamsMessages] = useState(teamsMessages);
-  const [localChannelMessages, setLocalChannelMessages] = useState(channelMessages);
-
-  // Update local state when props change
-  useEffect(() => {
-    setLocalEmails(emails);
-  }, [emails]);
-
-  useEffect(() => {
-    setLocalTeamsMessages(teamsMessages);
-  }, [teamsMessages]);
-
-  useEffect(() => {
-    setLocalChannelMessages(channelMessages);
-  }, [channelMessages]);
+  // Instead of copying props to state, use a readState object to track read notifications
+  const [readState, setReadState] = useState<Record<string, boolean>>({});
 
   // Convert different notification types to a unified format
   const notifications = useMemo(() => {
     const result: Notification[] = [];
     
     // Add email notifications - only unread ones
-    localEmails.forEach(email => {
-      // Email is unread if the isRead property is explicitly false
-      if (email.isRead === false) {
+    emails.forEach(email => {
+      // Email is unread if the isRead property is explicitly false and it's not in our readState
+      if (email.isRead === false && !readState[`email-${email.id}`]) {
         result.push({
           id: email.id,
           type: 'email',
@@ -85,9 +71,9 @@ export function NotificationBell({
     });
     
     // Add Teams chat notifications - only unread ones
-    localTeamsMessages.forEach(message => {
-      // Teams message is unread if the isRead property is explicitly false
-      if (message.isRead === false) {
+    teamsMessages.forEach(message => {
+      // Teams message is unread if the isRead property is explicitly false and it's not in our readState
+      if (message.isRead === false && !readState[`teams_message-${message.id}`]) {
         result.push({
           id: message.id,
           type: 'teams_message',
@@ -103,9 +89,9 @@ export function NotificationBell({
     });
     
     // Add Teams channel notifications - only unread ones
-    localChannelMessages.forEach(message => {
-      // Channel message is unread if the isRead property is explicitly false
-      if (message.isRead === false) {
+    channelMessages.forEach(message => {
+      // Channel message is unread if the isRead property is explicitly false and it's not in our readState
+      if (message.isRead === false && !readState[`teams_channel-${message.id}`]) {
         result.push({
           id: message.id,
           type: 'teams_channel',
@@ -124,7 +110,7 @@ export function NotificationBell({
     return result.sort((a, b) => 
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
-  }, [localEmails, localTeamsMessages, localChannelMessages]);
+  }, [emails, teamsMessages, channelMessages, readState]);
 
   // Reset AI summary when popover is closed
   useEffect(() => {
@@ -182,30 +168,11 @@ export function NotificationBell({
   };
 
   const markAsRead = (notification: Notification) => {
-    // Mark as read in local state based on type
-    switch (notification.type) {
-      case 'email':
-        setLocalEmails(prevEmails => 
-          prevEmails.map(email => 
-            email.id === notification.id ? { ...email, isRead: true } : email
-          )
-        );
-        break;
-      case 'teams_message':
-        setLocalTeamsMessages(prevMessages => 
-          prevMessages.map(message => 
-            message.id === notification.id ? { ...message, isRead: true } : message
-          )
-        );
-        break;
-      case 'teams_channel':
-        setLocalChannelMessages(prevMessages => 
-          prevMessages.map(message => 
-            message.id === notification.id ? { ...message, isRead: true } : message
-          )
-        );
-        break;
-    }
+    // Update the readState instead of modifying the original data
+    setReadState(prev => ({
+      ...prev,
+      [`${notification.type}-${notification.id}`]: true
+    }));
 
     // In a real implementation, you would also make an API call here
     // to mark the notification as read on the server
@@ -248,7 +215,7 @@ export function NotificationBell({
         >
           <Bell className="h-4 w-4" />
           {notifications.length > 0 && (
-            <span className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center rounded-full bg-red-500 text-[10px] text-white font-medium">
+            <span className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
               {notifications.length}
             </span>
           )}
