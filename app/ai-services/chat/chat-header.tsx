@@ -63,8 +63,8 @@ export function ChatHeader() {
     ) {
       const success = await chatStore.deleteChat();
       if (success) {
-        // Navigate back to the chat history page
-        router.push("/ai-services/chat-history");
+        // Navigate back to the AI services page
+        router.push("/ai-services");
       } else {
         alert("Failed to delete chat");
       }

@@ -7,6 +7,7 @@ import {
   ReactNode,
   useState,
   useMemo,
+  useCallback,
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -147,7 +148,7 @@ function AutoResizeTextarea({
       disabled={disabled}
       className="flex-1 outline-none text-sm px-2 resize-none overflow-y-auto min-h-[24px] max-h-[200px] w-full"
       rows={1}
-      style={{ height: "24px" }}
+      style={{ height: "50px" }}
     />
   );
 }
@@ -230,6 +231,65 @@ export default function Chat({
     }
 
     try {
+      // Log attachments that include content
+      if (attachedResources.length > 0) {
+        console.log("========== LLM CONTEXT - ATTACHMENTS ==========");
+        console.log(`Sending ${attachedResources.length} attachments to LLM:`);
+
+        let totalContentSize = 0;
+
+        attachedResources.forEach((resource, idx) => {
+          console.log(`Attachment ${idx + 1}/${attachedResources.length}:`);
+          console.log(`- Type: ${resource.type}`);
+          console.log(
+            `- Name: ${resource.name || resource.subject || "Unknown"}`
+          );
+          console.log(`- ID: ${resource.id}`);
+          if (resource.type === "email") {
+            console.log(`- Subject: ${resource.subject || "No subject"}`);
+            console.log(
+              `- From: ${resource.from?.emailAddress?.name || resource.from?.emailAddress?.address || "Unknown"}`
+            );
+          }
+
+          if (resource.content) {
+            console.log(
+              `- Content length: ${resource.content.length} characters`
+            );
+            console.log(
+              `- Content preview: "${resource.content.substring(0, 100)}..."`
+            );
+            totalContentSize += resource.content.length;
+          } else {
+            console.log(`- No content extracted`);
+          }
+        });
+
+        console.log(
+          `Total content size for all attachments: ${totalContentSize} characters`
+        );
+        console.log(
+          `Average content size per attachment: ${Math.round(totalContentSize / attachedResources.length)} characters`
+        );
+        console.log("==============================================");
+      }
+
+      // Prepare message with attachments
+      const messageWithAttachments = {
+        content: input,
+        attachments:
+          attachedResources.length > 0 ? attachedResources : undefined,
+      };
+      console.log(
+        "Submitting complete message:",
+        JSON.stringify({
+          hasContent: !!messageWithAttachments.content,
+          contentLength: messageWithAttachments.content.length,
+          hasAttachments: !!messageWithAttachments.attachments,
+          attachmentsCount: messageWithAttachments.attachments?.length || 0,
+        })
+      );
+
       // Call the parent submit handler
       await onSubmit(
         input,
@@ -245,6 +305,13 @@ export default function Chat({
         "Message submitted successfully. Current valid message count:",
         validMessages.length
       );
+
+      if (attachedResources.length > 0) {
+        console.log(
+          "Attachments were included in message:",
+          attachedResources.length
+        );
+      }
     } catch (err) {
       console.error("Error submitting message:", err);
     }
@@ -362,6 +429,48 @@ export default function Chat({
     }
   };
 
+  const renderResourceContent = useCallback(
+    (resource: Microsoft365Resource) => {
+      if (resource.type === "email") {
+        if (resource.content) {
+          return (
+            <div className="text-sm whitespace-pre-line">
+              {resource.content}
+            </div>
+          );
+        } else {
+          return (
+            <div className="text-sm text-gray-500 italic">
+              Email content not available. Try viewing the message in your email
+              client.
+            </div>
+          );
+        }
+      } else if (resource.type === "file" || resource.type === "files") {
+        // Handle file content
+        // ...
+      }
+
+      // Default fallback
+      return <div className="text-sm">Content not available</div>;
+    },
+    []
+  );
+
+  const getResourceTitle = useCallback(
+    (resource: Microsoft365Resource): string => {
+      if (resource.type === "email") {
+        return resource.subject || resource.name || "Email";
+      } else if (resource.type === "file" || resource.type === "files") {
+        return resource.name || "File";
+      }
+
+      // Default fallback
+      return resource.name || "Attachment";
+    },
+    []
+  );
+
   return (
     <div className="flex flex-col h-screen max-h-screen bg-white">
       {/* Header - Only show if custom header provided */}
@@ -378,7 +487,7 @@ export default function Chat({
         )}
 
         {/* Messages */}
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="max-w-3xl mx-auto space-y-8">
           {/* Info component - only shown initially */}
           {validMessages.length <= 1 && !error && infoComponent}
 
@@ -386,11 +495,11 @@ export default function Chat({
             <div key={index} className="w-full">
               {message.role === "user" ? (
                 <div className="flex flex-col items-end space-y-2">
-                  <div className="bg-gray-100 rounded-2xl py-2 px-4 max-w-xs sm:max-w-md">
+                  <div className="bg-gray-100 rounded-2xl py-3 px-5 max-w-xs sm:max-w-md">
                     {message.attachments && message.attachments.length > 0 && (
                       <AttachedResources
                         resources={message.attachments}
-                        className="mb-3"
+                        className="mb-4"
                         readonly
                       />
                     )}
@@ -399,7 +508,7 @@ export default function Chat({
                 </div>
               ) : (
                 <div className="flex flex-col space-y-2">
-                  <div className="bg-white border rounded-2xl py-3 px-4">
+                  <div className="bg-white border rounded-2xl py-4 px-5">
                     {message.content ? (
                       <>
                         <div className="prose prose-sm max-w-none text-gray-800">
@@ -407,24 +516,30 @@ export default function Chat({
                             remarkPlugins={[remarkGfm]}
                             components={{
                               p: ({ children, ...props }) => (
-                                <p className="text-sm" {...props}>
+                                <p
+                                  className="text-sm mb-4 leading-relaxed"
+                                  {...props}
+                                >
                                   {children}
                                 </p>
                               ),
                               ul: ({ ...props }) => (
                                 <ul
-                                  className="my-3 ml-6 space-y-2 list-disc"
+                                  className="my-4 ml-6 space-y-3 list-disc"
                                   {...props}
                                 />
                               ),
                               ol: ({ ...props }) => (
                                 <ol
-                                  className="my-3 ml-6 space-y-2 list-decimal"
+                                  className="my-4 ml-6 space-y-3 list-decimal"
                                   {...props}
                                 />
                               ),
                               li: ({ children, ...props }) => (
-                                <li className="text-sm" {...props}>
+                                <li
+                                  className="text-sm mb-1 leading-relaxed"
+                                  {...props}
+                                >
                                   {children}
                                 </li>
                               ),
@@ -437,7 +552,7 @@ export default function Chat({
                                     {children}
                                   </code>
                                 ) : (
-                                  <pre className="p-3 bg-gray-50 rounded-md overflow-auto text-sm my-3 font-mono">
+                                  <pre className="p-3 bg-gray-50 rounded-md overflow-auto text-sm my-4 font-mono">
                                     <code className={className} {...props}>
                                       {children}
                                     </code>

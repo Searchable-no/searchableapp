@@ -131,5 +131,24 @@ export const chatHistoryService = {
       console.error('Error in deleteChat:', error);
       return false;
     }
+  },
+  
+  // Verify database connection
+  async verifyDatabase(): Promise<{ success: boolean; message?: string }> {
+    try {
+      // Simple query to verify connection
+      const { data, error } = await supabase.from('chat_history').select('id').limit(1);
+      
+      if (error) {
+        return { success: false, message: error.message };
+      }
+      
+      return { success: true };
+    } catch (error) {
+      return { 
+        success: false, 
+        message: error instanceof Error ? error.message : 'Unknown error' 
+      };
+    }
   }
 }; 

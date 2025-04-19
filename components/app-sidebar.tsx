@@ -20,10 +20,10 @@ import {
   ChevronRight,
   FileAudio,
   Mail,
-  Newspaper,
   ChevronsLeft,
   ChevronsRight,
   Menu,
+  MessageSquare,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
@@ -54,12 +54,16 @@ const navigation: NavItem[] = [
     icon: Sparkles,
     children: [
       {
+        title: "Chat",
+        href: "/ai-services/chat",
+        icon: MessageSquare,
+      },
+      {
         title: "Transcription",
         href: "/ai-services/transcription",
         icon: FileAudio,
       },
       { title: "Email", href: "/ai-services/email", icon: Mail },
-      { title: "AI News", href: "/ai-services/ai-news", icon: Newspaper },
     ],
   },
   { title: "Settings", href: "/settings", icon: Settings },

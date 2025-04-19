@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { Message } from "@/components/ai-services/Chat";
 import Chat from "@/components/ai-services/Chat";
+import { Microsoft365Resource } from "@/components/ai-services/ResourcePicker";
 import { chatHistoryService } from "@/services/chatHistoryService";
 import {
   ChevronRight,
@@ -24,6 +25,7 @@ import { ChatHistory, ChatType } from "@/types/chat";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
+import { supabase } from "@/lib/supabase-browser";
 
 // Debug helper
 const DEBUG = true;
@@ -60,6 +62,8 @@ export default function GeneralChatPage() {
     Record<string, boolean>
   >({});
   const [selectedType, setSelectedType] = useState<ChatType | "all">("all");
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyLoadAttempts, setHistoryLoadAttempts] = useState(0);
 
   // Check if screen is mobile size
   useEffect(() => {
@@ -77,14 +81,66 @@ export default function GeneralChatPage() {
 
   // Load chat history for the sidebar
   useEffect(() => {
+    let retryCount = 0;
+    let pollingInterval: NodeJS.Timeout | null = null;
+    const maxRetries = 5;
+    let directUserId: string | null = null;
+
+    // Direktesjekk av bruker via Supabase
+    const checkSupabaseSession = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.user) {
+          directUserId = session.user.id;
+          debug("Supabase session check successful, user ID:", directUserId);
+          return true;
+        } else {
+          debug("Supabase session check: No active session");
+          return false;
+        }
+      } catch (error) {
+        debug("Error checking Supabase session:", error);
+        return false;
+      }
+    };
+
     const loadAllChatHistory = async () => {
-      if (!user?.id || userLoading) return;
+      // Prøv å bruke user fra useCurrentUser først
+      let userId = user?.id;
+
+      // Hvis useCurrentUser ikke er klar ennå, sjekk direkte via Supabase
+      if (!userId) {
+        if (directUserId) {
+          userId = directUserId;
+          debug("Using direct user ID from Supabase session:", userId);
+        } else {
+          const hasSession = await checkSupabaseSession();
+          if (hasSession && directUserId) {
+            userId = directUserId;
+            debug("Obtained user ID directly from Supabase:", userId);
+          }
+        }
+      }
+
+      if (!userId) {
+        debug("Cannot load chat history: user not loaded or not authenticated");
+        return false; // Loading not successful
+      }
+
+      setIsLoadingHistory(true);
+      setHistoryLoadAttempts((prev) => prev + 1);
 
       try {
+        debug(
+          `Loading chat history attempt #${retryCount + 1}, user ID:`,
+          userId
+        );
         const type =
           selectedType !== "all" ? (selectedType as ChatType) : undefined;
         debug("Loading chat history for sidebar:", "type:", type || "all");
-        const history = await chatHistoryService.getUserChats(user.id, type);
+        const history = await chatHistoryService.getUserChats(userId, type);
 
         debug("Loaded chat history for sidebar:", history.length, "items");
 
@@ -104,12 +160,49 @@ export default function GeneralChatPage() {
         }
 
         setChatHistory(validHistory);
+        debug("Chat history loaded successfully");
+        setIsLoadingHistory(false);
+        return true; // Loading successful
       } catch (error) {
         debug("Error loading chat history for sidebar:", error);
+        setIsLoadingHistory(false);
+        return false; // Loading not successful
       }
     };
 
-    loadAllChatHistory();
+    const attemptLoadWithRetry = async () => {
+      const success = await loadAllChatHistory();
+
+      // If loading was successful or we've reached max retries, stop polling
+      if (success || retryCount >= maxRetries) {
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+
+        if (!success && retryCount >= maxRetries) {
+          debug(`Failed to load chat history after ${maxRetries} attempts`);
+        }
+      }
+
+      retryCount++;
+    };
+
+    // Start initialization process
+    const initChatHistory = async () => {
+      // Try to get user directly from Supabase first
+      await checkSupabaseSession();
+
+      // Start polling immediately
+      debug("Starting polling to load chat history");
+      attemptLoadWithRetry();
+
+      // Set up polling every 1 second
+      pollingInterval = setInterval(attemptLoadWithRetry, 1000);
+    };
+
+    // Kick off the initialization
+    initChatHistory();
 
     // Add window focus event listener to reload history when tab regains focus
     const handleFocus = () => {
@@ -117,10 +210,24 @@ export default function GeneralChatPage() {
       loadAllChatHistory();
     };
 
-    window.addEventListener("focus", handleFocus);
+    // Also trigger on visibility change (when tab becomes visible)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        debug("Tab became visible, reloading chat history");
+        loadAllChatHistory();
+      }
+    };
 
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Cleanup
     return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [user, userLoading, selectedType]);
 
@@ -534,13 +641,29 @@ export default function GeneralChatPage() {
   };
 
   // Handle submitting a message
-  const handleSubmit = async (message: string) => {
-    if (!message.trim()) return;
+  const handleSubmit = async (
+    message: string,
+    attachments?: Microsoft365Resource[]
+  ) => {
+    if (!message.trim() && (!attachments || attachments.length === 0)) return;
 
-    // Add user message to chat
+    console.log(
+      `Submitting message with ${attachments?.length || 0} attachments`
+    );
+    if (attachments && attachments.length > 0) {
+      debug(`Attachment details:`);
+      attachments.forEach((attachment, idx) => {
+        debug(
+          `- Attachment ${idx + 1}: type=${attachment.type}, name=${attachment.name || attachment.subject}, has content=${!!attachment.content}`
+        );
+      });
+    }
+
+    // Add user message to chat with attachments if present
     const userMessage: Message = {
       role: "user",
       content: message,
+      attachments: attachments,
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -558,7 +681,7 @@ export default function GeneralChatPage() {
     setIsLoading(true);
 
     try {
-      // Make API request
+      // Make API request - include attachments in the messages
       const response = await fetch("/api/ai-services/chat", {
         method: "POST",
         headers: {
@@ -639,9 +762,13 @@ export default function GeneralChatPage() {
       {/* Modern Chat History Sidebar */}
       <div
         className={cn(
-          "w-64 border-r border-gray-100 flex-shrink-0 h-full flex flex-col transition-all duration-300 ease-in-out",
-          isMobile && "absolute z-10 bg-white h-full",
-          !sidebarOpen && (isMobile ? "-translate-x-full" : "w-0")
+          "border-r border-gray-100 flex-shrink-0 h-full flex flex-col transition-all duration-300 ease-in-out",
+          isMobile ? "absolute z-10 bg-white h-full" : "relative",
+          sidebarOpen
+            ? "w-64"
+            : isMobile
+              ? "-translate-x-full w-64"
+              : "w-0 opacity-0 overflow-hidden"
         )}
       >
         <div className="p-3 border-b border-gray-100 flex items-center justify-between">
@@ -655,14 +782,88 @@ export default function GeneralChatPage() {
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-          {isMobile && (
+          <div className="flex items-center gap-1">
             <button
-              className="h-7 w-7 ml-1 flex items-center justify-center rounded-full hover:bg-gray-100"
-              onClick={() => setSidebarOpen(false)}
+              className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-100"
+              onClick={async () => {
+                let userId = user?.id;
+                if (!userId) {
+                  // Try to get user from Supabase directly
+                  try {
+                    const {
+                      data: { session },
+                    } = await supabase.auth.getSession();
+                    if (session?.user) {
+                      userId = session.user.id;
+                    }
+                  } catch (error) {
+                    debug("Error getting session:", error);
+                  }
+                }
+
+                if (userId) {
+                  debug("Manual refresh of chat history triggered");
+                  chatHistoryService
+                    .getUserChats(
+                      userId,
+                      selectedType !== "all"
+                        ? (selectedType as ChatType)
+                        : undefined
+                    )
+                    .then((history) => {
+                      // Validate history items
+                      const validHistory = history.filter((chat) => {
+                        if (
+                          !chat.content ||
+                          !Array.isArray(chat.content.messages)
+                        ) {
+                          debug("Invalid chat structure:", chat.id);
+                          return false;
+                        }
+                        return true;
+                      });
+                      setChatHistory(validHistory);
+                      debug(
+                        "Chat history refreshed manually:",
+                        validHistory.length,
+                        "items"
+                      );
+                    })
+                    .catch((error) =>
+                      debug("Error manually refreshing chat history:", error)
+                    );
+                } else {
+                  debug("Cannot refresh: No user ID available");
+                }
+              }}
             >
-              <ChevronLeft className="h-4 w-4" />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-gray-500"
+              >
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                <path d="M21 3v5h-5"></path>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                <path d="M8 16H3v5"></path>
+              </svg>
             </button>
-          )}
+            {isMobile && (
+              <button
+                className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-100"
+                onClick={() => setSidebarOpen(false)}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Chat filter buttons */}
@@ -711,6 +912,19 @@ export default function GeneralChatPage() {
               <Plus className="h-3.5 w-3.5 mr-2" />
               New Chat
             </button>
+
+            {isLoadingHistory && (
+              <div className="flex items-center justify-center py-2 mb-2 border border-gray-100 rounded-md bg-gray-50">
+                <div className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full mr-2"></div>
+                <span className="text-xs text-gray-500">
+                  Laster historikk
+                  {historyLoadAttempts > 1
+                    ? ` (forsøk ${historyLoadAttempts})`
+                    : ""}
+                  ...
+                </span>
+              </div>
+            )}
 
             {isLoading && chatHistory.length === 0 ? (
               <div className="flex justify-center py-8">
@@ -765,16 +979,25 @@ export default function GeneralChatPage() {
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header with back button on mobile */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground px-4 py-2 border-b">
-          {isMobile && !sidebarOpen && (
+          {!sidebarOpen ? (
             <button
               className="h-8 w-8 mr-1 flex items-center justify-center rounded-full hover:bg-gray-100"
               onClick={() => setSidebarOpen(true)}
+              title="Vis chathistorikk"
             >
               <div className="w-4 h-4 flex flex-col justify-center space-y-0.5">
                 <span className="w-4 h-0.5 bg-gray-600 block"></span>
                 <span className="w-3 h-0.5 bg-gray-600 block"></span>
                 <span className="w-4 h-0.5 bg-gray-600 block"></span>
               </div>
+            </button>
+          ) : (
+            <button
+              className="h-8 w-8 mr-1 flex items-center justify-center rounded-full hover:bg-gray-100"
+              onClick={() => setSidebarOpen(false)}
+              title="Skjul chathistorikk"
+            >
+              <ChevronLeft className="h-4 w-4" />
             </button>
           )}
           <a

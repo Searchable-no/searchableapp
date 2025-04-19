@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, X, Upload, File, Mail } from "lucide-react";
 import { motion } from "framer-motion";
 import { useToast } from "@/components/ui/use-toast";
+import { processEmailContent } from "@/lib/email-processor";
 
 // Define types for Microsoft 365 resources
 export type Microsoft365Resource = {
@@ -32,6 +33,7 @@ export type Microsoft365Resource = {
   receivedDateTime?: string;
   subject?: string;
   content?: string; // Document content extracted by Document Intelligence
+  preview?: string; // Preview of content for display in the UI
 };
 
 interface SearchResultItem {
@@ -46,8 +48,12 @@ interface SearchResultItem {
       name?: string;
       address?: string;
     };
+    // Alternative format properties
+    name?: string;
+    email?: string;
   };
   receivedDateTime?: string;
+  bodyPreview?: string;
 }
 
 interface ResourcePickerProps {
@@ -63,7 +69,7 @@ export default function ResourcePicker({
   onSelectResources,
   userId,
 }: ResourcePickerProps) {
-  const [activeTab, setActiveTab] = useState<"emails" | "files">("emails");
+  const [activeTab, setActiveTab] = useState<"email" | "file">("email");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Microsoft365Resource[]>(
     []
@@ -95,7 +101,7 @@ export default function ResourcePicker({
       try {
         // Use the existing search functionality
         const endpoint =
-          activeTab === "emails"
+          activeTab === "email"
             ? `/api/search/emails?query=${encodeURIComponent(searchQuery)}`
             : `/api/search/files?query=${encodeURIComponent(searchQuery)}`;
 
@@ -107,23 +113,59 @@ export default function ResourcePicker({
         const data = await response.json();
 
         // Transform results to Microsoft365Resource format
-        const formattedResults = data.results.map((item: SearchResultItem) => ({
-          id: item.id,
-          name: activeTab === "emails" ? item.subject || item.name : item.name,
-          type: activeTab as "email" | "file" | "files",
-          icon:
-            activeTab === "emails" ? (
-              <Mail className="h-4 w-4" />
-            ) : (
-              <File className="h-4 w-4" />
-            ),
-          size: item.size,
-          lastModifiedDateTime: item.lastModifiedDateTime,
-          webUrl: item.webUrl,
-          from: item.from,
-          receivedDateTime: item.receivedDateTime,
-          subject: item.subject || item.name,
-        }));
+        const formattedResults = data.results.map((item: SearchResultItem) => {
+          let preview = "";
+
+          // Prepare preview text
+          if (activeTab === "email" && item.bodyPreview) {
+            preview =
+              item.bodyPreview.substring(0, 180) +
+              (item.bodyPreview.length > 180 ? "..." : "");
+          }
+
+          // Normalize the from field to handle different API response formats
+          let normalizedFrom = undefined;
+          if (item.from) {
+            if (item.from.emailAddress) {
+              // Standard Graph API format
+              normalizedFrom = {
+                emailAddress: {
+                  name: item.from.emailAddress.name,
+                  address: item.from.emailAddress.address,
+                },
+              };
+            } else if (item.from.name || item.from.email) {
+              // Alternative format from search API
+              normalizedFrom = {
+                emailAddress: {
+                  name: item.from.name,
+                  address: item.from.email,
+                },
+              };
+            }
+          }
+
+          // Create the formatted resource
+          return {
+            id: item.id,
+            name: activeTab === "email" ? item.subject || item.name : item.name,
+            type: activeTab === "email" ? "email" : "file",
+            icon:
+              activeTab === "email" ? (
+                <Mail className="h-4 w-4" />
+              ) : (
+                <File className="h-4 w-4" />
+              ),
+            size: item.size,
+            lastModifiedDateTime: item.lastModifiedDateTime,
+            webUrl: item.webUrl,
+            from: normalizedFrom,
+            receivedDateTime: item.receivedDateTime,
+            subject: item.subject || item.name,
+            // Include preview from bodyPreview if available
+            preview: preview || undefined,
+          };
+        });
 
         setSearchResults(formattedResults);
       } catch (error) {
@@ -259,9 +301,11 @@ export default function ResourcePicker({
     setSelectedResources((prev) => prev.filter((r) => r.id !== resourceId));
   };
 
-  // Save selected resources - NOW WITH DOCUMENT PROCESSING
+  // Save selected resources - NOW WITH DOCUMENT AND EMAIL PROCESSING
   const handleSave = async () => {
-    console.log("Saving selected resources, processing documents first...");
+    console.log(
+      "Saving selected resources, processing documents and emails first..."
+    );
 
     if (selectedResources.length === 0) {
       onSelectResources([]);
@@ -273,58 +317,105 @@ export default function ResourcePicker({
     setIsSaving(true);
 
     try {
-      // Process all file resources to extract content
+      // Split resources by type for processing
       const fileResources = selectedResources.filter(
         (r) => (r.type === "file" || r.type === "files") && !r.content
       );
-      const otherResources = selectedResources.filter(
-        (r) => (r.type !== "file" && r.type !== "files") || r.content
+      const emailResources = selectedResources.filter(
+        (r) => r.type === "email" && !r.content
+      );
+      const alreadyProcessedResources = selectedResources.filter(
+        (r) =>
+          r.content ||
+          (r.type !== "file" && r.type !== "files" && r.type !== "email")
       );
 
-      if (fileResources.length > 0) {
+      // Log processing details
+      console.log(`Processing resources:
+        - Files to process: ${fileResources.length}
+        - Emails to process: ${emailResources.length}
+        - Already processed: ${alreadyProcessedResources.length}
+      `);
+
+      let toastMessage = "";
+      if (fileResources.length > 0 && emailResources.length > 0) {
+        toastMessage = `Analyserer ${fileResources.length} ${fileResources.length === 1 ? "dokument" : "dokumenter"} og ${emailResources.length} ${emailResources.length === 1 ? "e-post" : "e-poster"}...`;
+      } else if (fileResources.length > 0) {
+        toastMessage = `Analyserer ${fileResources.length} ${fileResources.length === 1 ? "dokument" : "dokumenter"}...`;
+      } else if (emailResources.length > 0) {
+        toastMessage = `Analyserer ${emailResources.length} ${emailResources.length === 1 ? "e-post" : "e-poster"}...`;
+      }
+
+      if (toastMessage) {
         toast({
-          title: "Behandler dokumenter",
-          description: `Analyserer ${fileResources.length} ${
-            fileResources.length === 1 ? "dokument" : "dokumenter"
-          }...`,
+          title: "Behandler ressurser",
+          description: toastMessage,
           duration: 3000,
         });
-
-        // Process all files in parallel
-        const processedFiles = await Promise.all(
-          fileResources.map((resource) => processDocumentContent(resource))
-        );
-
-        // Combine processed files with other resources
-        const allProcessedResources = [...otherResources, ...processedFiles];
-        console.log(
-          `Processed ${processedFiles.length} files, returning ${allProcessedResources.length} total resources`
-        );
-
-        // Log success message for each file that was processed
-        processedFiles.forEach((file) => {
-          if (file.content) {
-            console.log(
-              `Successfully extracted content from "${file.name}" (${file.content.length} characters)`
-            );
-          }
-        });
-
-        // Return all resources with content
-        onSelectResources(allProcessedResources);
-      } else {
-        console.log("No files to process, returning resources as is");
-        onSelectResources(selectedResources);
       }
+
+      // Process files and emails in parallel
+      const processedFiles =
+        fileResources.length > 0
+          ? await Promise.all(
+              fileResources.map((resource) => processDocumentContent(resource))
+            )
+          : [];
+
+      const processedEmails =
+        emailResources.length > 0
+          ? await Promise.all(
+              emailResources.map(async (resource) => {
+                console.log(
+                  `Starting email content processing for: ${resource.subject || resource.name}, ID: ${resource.id}`
+                );
+                const result = await processEmailContent(resource);
+                console.log(
+                  `Email processing completed for: ${resource.subject || resource.name}`
+                );
+                console.log(
+                  `Email content extracted: ${result.content ? "Yes" : "No"}, length: ${result.content?.length || 0} characters`
+                );
+                return result;
+              })
+            )
+          : [];
+
+      // Combine all processed resources
+      const allProcessedResources = [
+        ...alreadyProcessedResources,
+        ...processedFiles,
+        ...processedEmails,
+      ];
+
+      console.log(
+        `Processed ${processedFiles.length} files and ${processedEmails.length} emails, returning ${allProcessedResources.length} total resources`
+      );
+
+      // Log processing results
+      [...processedFiles, ...processedEmails].forEach((resource) => {
+        if (resource.content) {
+          console.log(
+            `Successfully extracted content from "${resource.name}" (${resource.type}, ${resource.content.length} characters)`
+          );
+        } else {
+          console.log(
+            `No content extracted from "${resource.name}" (${resource.type})`
+          );
+        }
+      });
+
+      // Return all resources with content
+      onSelectResources(allProcessedResources);
 
       // Close the dialog
       onOpenChange(false);
     } catch (error) {
-      console.error("Error processing documents:", error);
+      console.error("Error processing resources:", error);
       toast({
         title: "Behandling feilet",
         description:
-          "Det oppsto en feil under behandling av dokumenter. Prøv igjen senere.",
+          "Det oppsto en feil under behandling av dokumenter eller e-poster. Prøv igjen senere.",
         variant: "destructive",
         duration: 5000,
       });
@@ -344,43 +435,38 @@ export default function ResourcePicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl p-0 pb-4 overflow-hidden rounded-xl">
-        <div className="flex flex-col h-[600px]">
-          <div className="p-4 border-b">
-            <DialogTitle className="text-lg font-medium">
-              Add documents
-            </DialogTitle>
-          </div>
+      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogTitle>Select Resource</DialogTitle>
 
-          <div className="p-4 border-b">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="p-4 pb-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground" />
               <Input
-                type="text"
-                placeholder="Search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 py-2"
+                placeholder={`Search ${activeTab}...`}
+                className="pl-9"
               />
             </div>
           </div>
 
           <Tabs
-            defaultValue="emails"
+            defaultValue="email"
             value={activeTab}
-            onValueChange={(v) => setActiveTab(v as "emails" | "files")}
+            onValueChange={(v) => setActiveTab(v as "email" | "file")}
             className="flex-1 flex flex-col"
           >
             <div className="border-b">
               <TabsList className="w-full justify-start bg-transparent p-0">
                 <TabsTrigger
-                  value="emails"
+                  value="email"
                   className="px-5 py-2 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none"
                 >
                   Emails
                 </TabsTrigger>
                 <TabsTrigger
-                  value="files"
+                  value="file"
                   className="px-5 py-2 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none"
                 >
                   Files
@@ -391,7 +477,7 @@ export default function ResourcePicker({
             <div className="flex-1 flex overflow-hidden">
               <div className="flex-1 overflow-hidden flex flex-col">
                 <TabsContent
-                  value="emails"
+                  value="email"
                   className="h-full m-0 flex-1 overflow-hidden"
                 >
                   <ScrollArea
@@ -430,14 +516,17 @@ export default function ResourcePicker({
                                   <div className="text-xs text-muted-foreground">
                                     {email.from?.emailAddress?.name ||
                                       email.from?.emailAddress?.address ||
-                                      (email.from && "name" in email.from
-                                        ? (email.from as any).name
-                                        : null) ||
-                                      (email.from && "email" in email.from
-                                        ? (email.from as any).email
-                                        : null) ||
+                                      // Handle alternate format
+                                      (email.from as any)?.name ||
+                                      (email.from as any)?.email ||
                                       "Unknown"}
                                   </div>
+                                  {/* Show email preview if available */}
+                                  {email.preview && (
+                                    <div className="text-xs text-gray-500 mt-2 line-clamp-2 bg-gray-50 p-1.5 rounded-sm border-l-2 border-gray-200">
+                                      {email.preview}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="text-xs text-muted-foreground">
@@ -464,7 +553,7 @@ export default function ResourcePicker({
                 </TabsContent>
 
                 <TabsContent
-                  value="files"
+                  value="file"
                   className="h-full m-0 flex-1 overflow-hidden"
                 >
                   <ScrollArea

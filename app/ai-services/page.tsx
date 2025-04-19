@@ -1,14 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  FileAudio,
-  Mail,
-  Sparkles,
-  Newspaper,
-  History,
-  MessageSquare,
-} from "lucide-react";
+import { FileAudio, Mail, Sparkles, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function AIServicesPage() {
@@ -30,18 +23,6 @@ export default function AIServicesPage() {
       description: "Få hjelp med e-post og kommunikasjonsoppgaver",
       icon: Mail,
       href: "/ai-services/email",
-    },
-    {
-      title: "AI News",
-      description: "Få oppsummering av nyheter fra dine favorittkilder",
-      icon: Newspaper,
-      href: "/ai-services/ai-news",
-    },
-    {
-      title: "Chat Historie",
-      description: "Se og administrer tidligere AI-samtaler",
-      icon: History,
-      href: "/ai-services/chat-history",
     },
   ];
 
