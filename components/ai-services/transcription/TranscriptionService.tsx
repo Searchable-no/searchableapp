@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Upload, FileAudio, Loader2, MessageSquare } from "lucide-react";
+import {
+  Upload,
+  FileAudio,
+  Loader2,
+  MessageSquare,
+  ChevronRight,
+} from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
 interface MinuteSegment {
@@ -47,12 +53,50 @@ export default function TranscriptionService() {
   const [loading, setLoading] = useState(false);
   const [transcriptionResult, setTranscriptionResult] =
     useState<TranscriptionResult | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const { toast } = useToast();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files && files.length > 0) {
       setFile(files[0]);
+    }
+  };
+
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const droppedFile = files[0];
+      if (droppedFile.type.startsWith("audio/")) {
+        setFile(droppedFile);
+      } else {
+        toast({
+          title: "Feil filtype",
+          description: "Vennligst velg en lydfil (audio/*)",
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -219,7 +263,7 @@ export default function TranscriptionService() {
     speakerColors[speaker] = index === 0 ? "bg-amber-100" : "bg-blue-100";
   });
 
-  const openChatInNewWindow = () => {
+  const openChatPage = () => {
     if (!transcriptionResult?.transcriptionId) return;
 
     // Make sure the transcription is in localStorage before opening chat
@@ -263,36 +307,77 @@ export default function TranscriptionService() {
       return;
     }
 
-    // Open chat page in a new window with the transcription ID and title as parameters
+    // Navigate to chat page with the transcription ID and title as parameters
     const url = `/ai-services/transcription/chat?id=${
       transcriptionResult.transcriptionId
     }&title=${encodeURIComponent(file?.name || "Transkripsjon")}`;
-    window.open(url, "_blank");
+    window.location.href = url;
   };
 
   return (
     <div className="flex flex-col w-full h-full">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
+        <a
+          href="/ai-services"
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          AI Tjenester
+        </a>
+        <ChevronRight className="h-3 w-3" />
+        <span className="font-medium text-foreground">Transkribering</span>
+      </div>
+
       <h1 className="text-2xl font-bold">Transkribering</h1>
       <p className="text-muted-foreground mb-6">
         Last opp lydfiler og få dem transkribert med AI
       </p>
 
       {/* Upload section - minimal at the top */}
-      <div className="flex items-center gap-4 mb-6 border rounded-md p-4 bg-muted/30">
-        <div className="flex-1 flex items-center gap-2">
-          <FileAudio className="h-5 w-5 text-muted-foreground" />
+      <div className="flex flex-col gap-4 mb-6 border rounded-lg p-5 bg-muted/30">
+        <div className="flex items-center justify-between w-full">
+          <h3 className="text-base font-medium">Last opp lydfil</h3>
+          {file && (
+            <div className="text-sm text-muted-foreground">
+              Valgt:{" "}
+              <span className="font-medium text-foreground">{file.name}</span>
+            </div>
+          )}
+        </div>
+
+        <div
+          className={`relative flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-lg transition-colors ${
+            isDragging
+              ? "border-primary bg-primary/5"
+              : "border-input bg-background/50 hover:bg-background/80"
+          }`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          <FileAudio
+            className={`h-10 w-10 ${isDragging ? "text-primary" : "text-primary/60"}`}
+          />
+          <div className="text-center">
+            <p className="text-sm font-medium">Dra og slipp lydfil her</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              eller klikk for å velge fil
+            </p>
+          </div>
           <input
             type="file"
             accept="audio/*"
             onChange={handleFileChange}
-            className="text-sm flex-1"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             id="file-upload"
           />
         </div>
+
         <Button
           onClick={handleUpload}
           disabled={!file || loading}
-          className="shrink-0"
+          className="w-full"
+          size="lg"
         >
           {loading ? (
             <>
@@ -308,13 +393,7 @@ export default function TranscriptionService() {
         </Button>
       </div>
 
-      {/* File name display if selected */}
-      {file && (
-        <div className="text-sm font-medium mb-4">
-          Valgt fil: <span className="text-muted-foreground">{file.name}</span>
-        </div>
-      )}
-
+      {/* File name display if selected - we're now showing this inside the upload section */}
       {/* Loading indicator */}
       {loading && (
         <div className="flex items-center justify-center p-8 border rounded-md mb-6 bg-muted/20">
@@ -358,19 +437,25 @@ export default function TranscriptionService() {
             {/* Transcript content with speakers */}
             <div className="divide-y max-h-[calc(100vh-26rem)] overflow-y-auto">
               {transcriptionResult.segments
-                .reduce((groups, segment) => {
-                  // Group segments by speaker consecutively
-                  const lastGroup = groups[groups.length - 1];
-                  if (lastGroup && lastGroup.speaker === segment.speaker) {
-                    lastGroup.segments.push(segment);
-                  } else {
-                    groups.push({
-                      speaker: segment.speaker,
-                      segments: [segment],
-                    });
-                  }
-                  return groups;
-                }, [] as Array<{ speaker: string; segments: (typeof transcriptionResult.segments)[0][] }>)
+                .reduce(
+                  (groups, segment) => {
+                    // Group segments by speaker consecutively
+                    const lastGroup = groups[groups.length - 1];
+                    if (lastGroup && lastGroup.speaker === segment.speaker) {
+                      lastGroup.segments.push(segment);
+                    } else {
+                      groups.push({
+                        speaker: segment.speaker,
+                        segments: [segment],
+                      });
+                    }
+                    return groups;
+                  },
+                  [] as Array<{
+                    speaker: string;
+                    segments: (typeof transcriptionResult.segments)[0][];
+                  }>
+                )
                 .map((group, groupIndex) => {
                   const speakerIndex = speakers.indexOf(group.speaker);
                   const firstSegment = group.segments[0];
@@ -410,7 +495,7 @@ export default function TranscriptionService() {
 
           {/* Chatbot button */}
           <div className="mt-4 flex justify-end">
-            <Button onClick={openChatInNewWindow} className="gap-2">
+            <Button onClick={openChatPage} className="gap-2">
               <MessageSquare className="h-4 w-4" />
               Åpne chat med transkripsjonen
             </Button>

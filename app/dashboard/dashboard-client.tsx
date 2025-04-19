@@ -70,10 +70,10 @@ const defaultPreferences: DashboardPreferences = {
 
 // Helper to safely access localStorage (avoiding SSR issues)
 const getFromLocalStorage = (key: string) => {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === "undefined") return null;
   try {
     const item = localStorage.getItem(key);
-    console.log(`Retrieved cache for ${key}:`, item ? 'found' : 'not found');
+    console.log(`Retrieved cache for ${key}:`, item ? "found" : "not found");
     return item ? JSON.parse(item) : null;
   } catch (error) {
     console.error(`Error reading ${key} from localStorage:`, error);
@@ -82,7 +82,7 @@ const getFromLocalStorage = (key: string) => {
 };
 
 const setToLocalStorage = (key: string, value: any) => {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   try {
     const valueToStore = JSON.stringify(value);
     localStorage.setItem(key, valueToStore);
@@ -93,24 +93,27 @@ const setToLocalStorage = (key: string, value: any) => {
 };
 
 // Function to check if cache is expired
-const isCacheExpired = (timestamp: string | undefined | null, maxAge: number) => {
+const isCacheExpired = (
+  timestamp: string | undefined | null,
+  maxAge: number
+) => {
   if (!timestamp) return true; // If no timestamp, consider cache expired
-  
+
   try {
     const cacheTime = new Date(timestamp).getTime();
     if (isNaN(cacheTime)) return true; // Invalid date, consider expired
-    
+
     const now = new Date().getTime();
     const ageInSeconds = (now - cacheTime) / 1000;
     return ageInSeconds > maxAge;
   } catch (error) {
-    console.error('Error checking cache expiry:', error);
+    console.error("Error checking cache expiry:", error);
     return true; // On error, consider expired
   }
 };
 
 // Cache key for dashboard data
-const DASHBOARD_CACHE_KEY = 'dashboard_cache';
+const DASHBOARD_CACHE_KEY = "dashboard_cache";
 // Default cache expiry time in seconds (30 minutes)
 const DEFAULT_CACHE_EXPIRY = 1800;
 
@@ -119,13 +122,14 @@ function useIsNavigatingFromDashboard() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [previousPath, setPreviousPath] = useState(pathname);
-  const [isNavigatingFromDashboard, setIsNavigatingFromDashboard] = useState(false);
+  const [isNavigatingFromDashboard, setIsNavigatingFromDashboard] =
+    useState(false);
 
   useEffect(() => {
     // Only set isNavigatingFromDashboard to true when we navigate away from dashboard
-    if (previousPath === '/dashboard' && pathname !== '/dashboard') {
+    if (previousPath === "/dashboard" && pathname !== "/dashboard") {
       setIsNavigatingFromDashboard(true);
-    } else if (pathname === '/dashboard') {
+    } else if (pathname === "/dashboard") {
       // Reset when we're back on dashboard
       setIsNavigatingFromDashboard(false);
     }
@@ -155,83 +159,84 @@ export function DashboardClient() {
   useEffect(() => {
     // Immediately attempt to load from cache
     const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-    
+
     if (cachedData && cachedData.data) {
-      console.log('MOUNT: Found cached dashboard data from:', 
-        new Date(cachedData.timestamp || Date.now()).toLocaleTimeString());
-      
+      console.log(
+        "MOUNT: Found cached dashboard data from:",
+        new Date(cachedData.timestamp || Date.now()).toLocaleTimeString()
+      );
+
       // Set data and loading states immediately from cache
       setData(cachedData.data);
       setLastRefreshed(new Date(cachedData.timestamp || Date.now()));
       setIsFreshData(false);
-      
+
       // Since we have data, we can show the UI right away
       setIsLoading(false);
-      
+
       if (cachedData.preferences) {
-        console.log('MOUNT: Setting preferences from cache');
+        console.log("MOUNT: Setting preferences from cache");
         setPreferences(cachedData.preferences);
         setPreferencesLoaded(true);
-        
+
         // Apply theme from cached preferences
         if (cachedData.preferences.theme) {
           setTheme(cachedData.preferences.theme);
         }
       }
     } else {
-      console.log('MOUNT: No cached data found');
+      console.log("MOUNT: No cached data found");
     }
-    
+
     setCacheLoaded(true);
   }, []); // This effect only runs once on mount
 
   // Second effect: User data-dependent operations
   useEffect(() => {
     if (userLoading) {
-      console.log('AUTH: User still loading, waiting...');
+      console.log("AUTH: User still loading, waiting...");
       return;
     }
-    
+
     if (!user?.id) {
-      console.log('AUTH: No user logged in');
+      console.log("AUTH: No user logged in");
       return;
     }
-    
-    console.log('AUTH: User authenticated, ID:', user.id);
-    
+
+    console.log("AUTH: User authenticated, ID:", user.id);
+
     // If we don't have preferences yet, load them
     if (!preferencesLoaded) {
-      console.log('PREFS: Loading preferences from DB');
+      console.log("PREFS: Loading preferences from DB");
       loadPreferences();
     }
-    
+
     // Check if we have cache data
     if (Object.keys(data).length === 0) {
-      console.log('DATA: No data in state, fetching fresh data');
+      console.log("DATA: No data in state, fetching fresh data");
       fetchData(false);
       return;
     }
-    
+
     // If we're navigating away from dashboard, don't do background refreshes
     if (isNavigatingFromDashboard) {
-      console.log('NAVIGATION: User is leaving dashboard, skipping refresh');
+      console.log("NAVIGATION: User is leaving dashboard, skipping refresh");
       return;
     }
-    
+
     // We have some data - determine if we need a background refresh
     const now = new Date();
     const cacheTimestamp = lastRefreshed || now;
     const cacheAge = (now.getTime() - cacheTimestamp.getTime()) / 1000; // in seconds
-    
+
     console.log(`CACHE: Cache age is ${cacheAge.toFixed(0)} seconds`);
-    
+
     if (isCacheExpired(cacheTimestamp.toISOString(), DEFAULT_CACHE_EXPIRY)) {
-      console.log('CACHE: Cache is expired, refreshing in background');
+      console.log("CACHE: Cache is expired, refreshing in background");
       fetchData(true);
     } else {
-      console.log('CACHE: Cache is fresh, no refresh needed');
+      console.log("CACHE: Cache is fresh, no refresh needed");
     }
-    
   }, [user, userLoading, cacheLoaded, isNavigatingFromDashboard]); // Add isNavigatingFromDashboard to dependencies
 
   useEffect(() => {
@@ -261,20 +266,21 @@ export function DashboardClient() {
           enabledTiles:
             allPrefs.enabled_tiles || defaultPreferences.enabledTiles,
           tileOrder: allPrefs.tile_order || defaultPreferences.tileOrder,
-          tilePreferences: allPrefs.tile_preferences || defaultPreferences.tilePreferences,
+          tilePreferences:
+            allPrefs.tile_preferences || defaultPreferences.tilePreferences,
           theme: allPrefs.theme || defaultPreferences.theme,
         };
-        
-        console.log('Loaded preferences from database:', newPreferences);
+
+        console.log("Loaded preferences from database:", newPreferences);
         setPreferences(newPreferences);
-        
+
         // Update the theme
         if (newPreferences.theme) {
           setTheme(newPreferences.theme);
         }
       } else {
         // No preferences found, create default without the new columns
-        console.log('No preferences found, creating defaults');
+        console.log("No preferences found, creating defaults");
         const { error: createError } = await supabase
           .from("dashboard_preferences")
           .insert({
@@ -301,30 +307,34 @@ export function DashboardClient() {
 
   const fetchData = async (isBackgroundRefresh = false) => {
     if (!user?.id) {
-      console.log('FETCH: No user ID, aborting fetch');
+      console.log("FETCH: No user ID, aborting fetch");
       return;
     }
-    
+
     try {
       if (!isBackgroundRefresh) {
-        console.log('FETCH: Foreground fetch starting - showing loading state');
+        console.log("FETCH: Foreground fetch starting - showing loading state");
         setIsLoading(true);
       } else {
-        console.log('FETCH: Background fetch starting - showing refresh indicator');
+        console.log(
+          "FETCH: Background fetch starting - showing refresh indicator"
+        );
         setRefreshing(true);
       }
-      
-      console.log(`FETCH: Getting data from server (background: ${isBackgroundRefresh})`);
+
+      console.log(
+        `FETCH: Getting data from server (background: ${isBackgroundRefresh})`
+      );
       const result = await getData(undefined, !isBackgroundRefresh);
-      
+
       if (!result.error) {
-        console.log('FETCH: Data received successfully');
-        
+        console.log("FETCH: Data received successfully");
+
         setData(result);
         const now = new Date();
         setLastRefreshed(now);
         setIsFreshData(true);
-        
+
         // Cache the data with a timestamp and user info
         const cacheData = {
           data: result,
@@ -332,12 +342,12 @@ export function DashboardClient() {
           preferences: preferences,
           userId: user.id,
         };
-        
+
         setToLocalStorage(DASHBOARD_CACHE_KEY, cacheData);
-        console.log('FETCH: Dashboard data cached successfully');
+        console.log("FETCH: Dashboard data cached successfully");
       } else {
-        console.error('FETCH: Error in API response:', result.error);
-        
+        console.error("FETCH: Error in API response:", result.error);
+
         // Only show errors if not a background refresh
         if (!isBackgroundRefresh) {
           setData(result);
@@ -352,31 +362,33 @@ export function DashboardClient() {
     } finally {
       // Make sure to update loading states
       if (!isBackgroundRefresh) {
-        console.log('FETCH: Foreground fetch complete, hiding loading state');
+        console.log("FETCH: Foreground fetch complete, hiding loading state");
         setIsLoading(false);
       } else {
-        console.log('FETCH: Background fetch complete, hiding refresh indicator');
+        console.log(
+          "FETCH: Background fetch complete, hiding refresh indicator"
+        );
       }
       setRefreshing(false);
     }
   };
 
   const handleManualRefresh = () => {
-    console.log('MANUAL: User triggered manual refresh');
-    
+    console.log("MANUAL: User triggered manual refresh");
+
     // Show a toast notification
     toast.success("Refreshing dashboard...");
-    
+
     // Clear the fresh data flag since we're actively refreshing
     setIsFreshData(false);
-    
+
     // Start a foreground refresh with force refresh
     fetchData(false);
   };
 
   const handlePreferencesChange = (newPreferences: DashboardPreferences) => {
     setPreferences(newPreferences);
-    
+
     // Update the cache with new preferences
     if (user?.id) {
       const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
@@ -438,50 +450,54 @@ export function DashboardClient() {
     const shouldShowLoading = (dataItems: any[] | undefined) => {
       // If we already have data, don't show loading
       if (dataItems && dataItems.length > 0) return false;
-      
-      // If we have cached data but no items, still don't show loading 
+
+      // If we have cached data but no items, still don't show loading
       // since we want to show "No items" instead of loading skeleton
       if (!isFreshData) return false;
-      
+
       // Otherwise, show loading if we're actively loading
       return isLoading;
     };
 
     switch (tileType) {
       case "email":
-        return { 
-          emails: data.emails || [], 
+        return {
+          emails: data.emails || [],
           isLoading: shouldShowLoading(data.emails),
           isCachedData: !isFreshData,
-          userId: data.userId
+          userId: data.userId,
         };
       case "teams_message":
         return {
           messages: data.teamsMessages || [],
           isLoading: shouldShowLoading(data.teamsMessages),
           userId: data.userId,
-          isCachedData: !isFreshData
+          isCachedData: !isFreshData,
         };
       case "teams_channel":
         return {
           messages: data.channelMessages || [],
           isLoading: shouldShowLoading(data.channelMessages),
           userId: data.userId,
-          isCachedData: !isFreshData
+          isCachedData: !isFreshData,
         };
       case "calendar":
-        return { 
-          events: data.events || [], 
-          isLoading: !Array.isArray(data.events) || (isLoading && (!data.events || data.events.length === 0) && !isFreshData),
+        return {
+          events: data.events || [],
+          isLoading:
+            !Array.isArray(data.events) ||
+            (isLoading &&
+              (!data.events || data.events.length === 0) &&
+              !isFreshData),
           isCachedData: !isFreshData,
-          userId: data.userId
+          userId: data.userId,
         };
       case "files":
-        return { 
-          files: data.files || [], 
+        return {
+          files: data.files || [],
           isLoading: shouldShowLoading(data.files),
           isCachedData: !isFreshData,
-          userId: data.userId
+          userId: data.userId,
         };
       case "planner":
         return {
@@ -492,26 +508,28 @@ export function DashboardClient() {
             preferences.tilePreferences.planner.refreshInterval * 1000, // Convert to milliseconds
           onRefresh: async () => {
             try {
-              console.log('Refreshing planner tasks via tile refresh');
+              console.log("Refreshing planner tasks via tile refresh");
               setRefreshing(true);
-              
-              const result = await getData(['planner'], true);
+
+              const result = await getData(["planner"], true);
               if (result.plannerTasks) {
-                console.log(`Refreshed ${result.plannerTasks.length} planner tasks`);
-                
+                console.log(
+                  `Refreshed ${result.plannerTasks.length} planner tasks`
+                );
+
                 // Update just the planner tasks in our data state
                 setData((prevData: any) => ({
                   ...prevData,
-                  plannerTasks: result.plannerTasks
+                  plannerTasks: result.plannerTasks,
                 }));
-                
+
                 // Mark as fresh data
                 setIsFreshData(true);
-                
+
                 // Update the timestamp
                 const now = new Date();
                 setLastRefreshed(now);
-                
+
                 // Update the cache
                 const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
                 if (cachedData) {
@@ -519,17 +537,17 @@ export function DashboardClient() {
                     ...cachedData,
                     data: {
                       ...cachedData.data,
-                      plannerTasks: result.plannerTasks
+                      plannerTasks: result.plannerTasks,
                     },
-                    timestamp: now.toISOString()
+                    timestamp: now.toISOString(),
                   };
                   setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                  console.log('Updated planner tasks in cache');
+                  console.log("Updated planner tasks in cache");
                 }
-                
-                toast.success('Planner tasks refreshed');
+
+                toast.success("Planner tasks refreshed");
               } else if (result.error) {
-                console.error('Error refreshing planner tasks:', result.error);
+                console.error("Error refreshing planner tasks:", result.error);
                 toast.error(`Failed to refresh: ${result.error}`);
               }
             } catch (err) {
@@ -539,7 +557,7 @@ export function DashboardClient() {
               setRefreshing(false);
             }
           },
-          isCachedData: !isFreshData
+          isCachedData: !isFreshData,
         };
       default:
         return {};
@@ -547,7 +565,7 @@ export function DashboardClient() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-full content-scrollable">
       <div className="container mx-auto px-3 py-4 space-y-4 max-w-[1920px]">
         {/* Header Section - Reduced padding and spacing */}
         <div className="flex flex-col space-y-2 md:space-y-0 md:flex-row md:items-center md:justify-between">
@@ -564,19 +582,21 @@ export function DashboardClient() {
               <div className="flex items-center text-xs text-muted-foreground">
                 <Info className="h-3.5 w-3.5 mr-1" />
                 <span>
-                  Cached data from {lastRefreshed.toLocaleTimeString()} 
+                  Cached data from {lastRefreshed.toLocaleTimeString()}
                   {refreshing && <span className="ml-1">• refreshing...</span>}
                 </span>
               </div>
             )}
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               size="icon"
               className="h-8 w-8 rounded-lg hover:bg-primary/10 transition-colors"
               onClick={handleManualRefresh}
               disabled={refreshing}
             >
-              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+              <RefreshCw
+                className={cn("h-4 w-4", refreshing && "animate-spin")}
+              />
             </Button>
             <Button
               variant="outline"

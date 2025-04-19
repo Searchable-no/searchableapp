@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, FormEvent, ReactNode, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  FormEvent,
+  ReactNode,
+  useState,
+  useMemo,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   AlertCircle,
@@ -176,6 +183,32 @@ export default function Chat({
   const [emailSubject, setEmailSubject] = useState("");
   const [emailRecipient, setEmailRecipient] = useState("");
 
+  // Logging for debug
+  useEffect(() => {
+    if (!messages || messages.length === 0) {
+      console.log("Chat component: No messages to display");
+    } else {
+      console.log(`Chat component: Displaying ${messages.length} messages`);
+      console.log("First few messages:", messages.slice(0, 3));
+    }
+  }, [messages]);
+
+  // Validate messages format
+  const validMessages = useMemo(() => {
+    if (!Array.isArray(messages)) {
+      console.error("Invalid messages format: not an array");
+      return [];
+    }
+
+    return messages.filter(
+      (message) =>
+        message &&
+        typeof message === "object" &&
+        (message.role === "user" || message.role === "assistant") &&
+        message.content !== undefined
+    );
+  }, [messages]);
+
   // Scroll to bottom of messages when new ones come in
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -185,13 +218,36 @@ export default function Chat({
 
   // Handle submitting a message
   const handleSubmit = async (e?: FormEvent) => {
-    if (e) e.preventDefault();
-    if (!input.trim() && attachedResources.length === 0) return;
+    if (e) {
+      e.preventDefault();
+    }
 
-    await onSubmit(input, attachedResources);
+    if (
+      !input.trim() &&
+      (!attachedResources || attachedResources.length === 0)
+    ) {
+      return;
+    }
 
-    // Clear attachments after sending
-    setAttachedResources([]);
+    try {
+      // Call the parent submit handler
+      await onSubmit(
+        input,
+        attachedResources.length > 0 ? attachedResources : undefined
+      );
+
+      // Reset input and attached resources
+      setInput("");
+      setAttachedResources([]);
+
+      // Log for debugging
+      console.log(
+        "Message submitted successfully. Current valid message count:",
+        validMessages.length
+      );
+    } catch (err) {
+      console.error("Error submitting message:", err);
+    }
   };
 
   // Handle selecting resources from the picker
@@ -345,9 +401,9 @@ export default function Chat({
         {/* Messages */}
         <div className="max-w-3xl mx-auto space-y-6">
           {/* Info component - only shown initially */}
-          {messages.length <= 1 && !error && infoComponent}
+          {validMessages.length <= 1 && !error && infoComponent}
 
-          {messages.map((message, index) => (
+          {validMessages.map((message, index) => (
             <div key={index} className="w-full">
               {message.role === "user" ? (
                 <div className="flex flex-col items-end space-y-2">

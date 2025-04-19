@@ -1,106 +1,89 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import React, { useMemo } from "react";
 import DOMPurify from "dompurify";
 import { EmailMessage } from "@/lib/microsoft-graph";
 
-// CSS for the iframe content
-const iframeStyles = `
-  body {
+// Base styles for email content - keeping it minimal to preserve original layouts
+const emailStyles = `
+  .email-content {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
     line-height: 1.6;
     color: #333;
-    margin: 0;
-    padding: 0;
-    overflow-wrap: break-word;
-    word-wrap: break-word;
   }
   
-  img {
+  .email-content img {
     max-width: 100%;
     height: auto;
   }
   
-  a {
+  .email-content a {
     color: #3b82f6;
     text-decoration: underline;
   }
   
-  blockquote {
+  .email-content blockquote {
     border-left: 3px solid #e5e7eb;
     padding-left: 1rem;
     margin-left: 0;
     color: #6b7280;
   }
   
-  pre {
-    background-color: #f3f4f6;
-    padding: 0.75rem;
-    border-radius: 0.25rem;
-    overflow-x: auto;
-    white-space: pre-wrap;
-  }
-  
-  table {
-    border-collapse: collapse;
-    width: 100%;
-    margin-bottom: 1rem;
-  }
-  
-  table td, table th {
-    border: 1px solid #e5e7eb;
-    padding: 0.5rem;
-  }
-  
-  p {
-    margin: 0 0 1em 0;
-  }
-  
-  ul, ol {
-    margin-bottom: 1rem;
-    padding-left: 1.5rem;
-  }
-  
-  h1, h2, h3, h4, h5, h6 {
-    margin-top: 1.5rem;
-    margin-bottom: 1rem;
-    font-weight: 600;
-    line-height: 1.25;
-  }
-  
-  /* Common email client specific fixes */
-  
-  /* Outlook */
-  .ExternalClass {
-    width: 100%;
-  }
-  
-  .ExternalClass, .ExternalClass p, .ExternalClass span, 
-  .ExternalClass font, .ExternalClass td, .ExternalClass div {
-    line-height: 100%;
-  }
-  
-  /* Fix for quoted content */
-  .gmail_quote {
+  /* Fix for Gmail quoted content */
+  .email-content .gmail_quote {
     border-left: 1px solid #ccc;
     padding-left: 12px;
     color: #666;
   }
-  
-  /* Outlook spacing */
-  div[style*="margin: 16px 0"] { 
-    margin: 0 !important; 
+
+  /* Fix for Outlook specific elements */
+  .email-content .MsoNormal {
+    margin: 0 !important;
   }
   
-  /* Common outlook nested list fix */
-  .outlook-nested-list {
-    padding-left: 20px !important;
+  /* Specific fixes for Asana emails */
+  .email-content [class*="asana"],
+  .email-content [id*="asana"],
+  .email-content [class*="task"],
+  .email-content [id*="task"] {
+    display: initial !important;
   }
   
-  /* Fix for blue links in Outlook */
-  span.MsoHyperlink {
-    color: #3b82f6 !important;
+  /* Preserve checkbox appearance */
+  .email-content input[type="checkbox"] {
+    display: inline-block !important;
+    width: auto !important;
+    margin-right: 5px !important;
+  }
+  
+  /* Preserve task list styles */
+  .email-content td img[width="15"],
+  .email-content td img[width="16"],
+  .email-content td img[width="14"] {
+    vertical-align: middle;
+    display: inline-block !important;
+  }
+  
+  /* Make Asana emails display better */
+  .asana-email img {
+    display: inline-block;
+  }
+  
+  .asana-email table {
+    width: auto !important;
+    max-width: 100%;
+  }
+  
+  .asana-email [style*="width:"] {
+    max-width: 100%;
+  }
+  
+  /* Only add padding for mobile */
+  @media (max-width: 640px) {
+    .email-content {
+      padding: 0 10px;
+    }
   }
 `;
 
@@ -109,112 +92,123 @@ interface EmailRendererProps {
   className?: string;
 }
 
-export default function EmailRenderer({
+const EmailRenderer: React.FC<EmailRendererProps> = ({
   email,
   className = "",
-}: EmailRendererProps) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  const getFullEmailContent = (email: EmailMessage): string => {
-    if (!email) return "<p>No email content available</p>";
-
-    // First try the body content which should contain the full HTML
-    if (email.body?.content && email.body.content.trim().length > 0) {
-      return email.body.content;
-    }
-
-    // If no body content, try bodyPreview
-    if (email.bodyPreview && email.bodyPreview.trim().length > 0) {
-      return `<p>${email.bodyPreview}</p>`;
-    }
-
-    return "<p>No content available</p>";
-  };
-
-  useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-
+}) => {
+  // Process email content with HTML transformations for better rendering
+  const processedContent = useMemo(() => {
     try {
-      // Get content and sanitize it
-      const htmlContent = getFullEmailContent(email);
-      const sanitizedHtml = DOMPurify.sanitize(htmlContent, {
-        USE_PROFILES: { html: true },
-        ADD_ATTR: ["target", "class"], // Allow target attribute for links and class
-        FORBID_TAGS: ["script", "iframe", "object", "embed"],
-        FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
-      });
+      // Get content from email body or fallback to preview
+      let content = "";
 
-      // Access the iframe document
-      const iframeDocument =
-        iframe.contentDocument || iframe.contentWindow?.document;
-      if (!iframeDocument) return;
-
-      // Create a HTML document with proper structure
-      const fullHtml = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>${iframeStyles}</style>
-          </head>
-          <body>
-            ${sanitizedHtml}
-          </body>
-        </html>
-      `;
-
-      // Write content to iframe
-      iframeDocument.open();
-      iframeDocument.write(fullHtml);
-      iframeDocument.close();
-
-      // Adjust iframe height to content after it's loaded
-      const resizeObserver = new ResizeObserver(() => {
-        if (iframe && iframeDocument.body) {
-          // Add some padding to avoid scrollbars
-          iframe.style.height = `${iframeDocument.body.scrollHeight + 20}px`;
-        }
-      });
-
-      // Observe the body for size changes
-      if (iframeDocument.body) {
-        resizeObserver.observe(iframeDocument.body);
+      if (email.body?.content) {
+        content = email.body.content;
+      } else if (email.bodyPreview) {
+        // Format preview as proper HTML if it's plain text
+        content = `<div style="white-space: pre-wrap;">${email.bodyPreview}</div>`;
+      } else {
+        return "";
       }
 
-      // Add click event listener to handle links
-      iframeDocument.addEventListener("click", (e) => {
-        const target = e.target as HTMLElement;
-        const link = target.closest("a");
+      // Check if content is plain text
+      if (
+        email.body?.contentType === "text" ||
+        (!content.includes("<") && !content.includes(">"))
+      ) {
+        content = `<div style="white-space: pre-wrap;">${content}</div>`;
+        return content;
+      }
 
-        if (link && link.href) {
-          e.preventDefault();
-          window.open(link.href, "_blank");
+      // Check if this is a known email format we should preserve
+      const isSpecialFormat =
+        content.includes("asana.com") ||
+        email.from?.emailAddress?.address?.includes("asana") ||
+        content.includes("task") ||
+        content.includes("searchable.no") ||
+        content.includes("background-color:");
+
+      if (isSpecialFormat) {
+        // For Asana and other well-structured emails, preserve the layout
+        return content;
+      }
+
+      // Process HTML for basic display improvements, if needed
+      const tempDiv = document.createElement("div");
+      tempDiv.innerHTML = content;
+
+      // Only make images responsive, avoid other transformations
+      const images = tempDiv.querySelectorAll("img");
+      images.forEach((img) => {
+        if (
+          !img.hasAttribute("width") ||
+          parseInt(img.getAttribute("width") || "0", 10) > 600
+        ) {
+          (img as HTMLImageElement).style.maxWidth = "100%";
+        }
+        if (img.hasAttribute("height")) {
+          (img as HTMLImageElement).style.height = "auto";
         }
       });
 
-      // Clean up
-      return () => {
-        if (iframeDocument.body) {
-          resizeObserver.unobserve(iframeDocument.body);
-        }
-        resizeObserver.disconnect();
-      };
+      return tempDiv.innerHTML;
     } catch (error) {
-      console.error("Error rendering email content:", error);
+      console.error("Error processing email content:", error);
+      return email.bodyPreview || "Error displaying email content";
     }
   }, [email]);
 
+  // Configure DOMPurify for email content
+  const sanitizeConfig = {
+    ADD_TAGS: ["style", "input", "iframe"],
+    ADD_ATTR: [
+      "target",
+      "style",
+      "width",
+      "height",
+      "align",
+      "valign",
+      "class",
+      "type",
+      "checked",
+      "src",
+      "alt",
+      "border",
+      "cellpadding",
+      "cellspacing",
+      "bgcolor",
+      "background",
+      "frameborder",
+      "role",
+      "aria-label",
+    ],
+    ALLOW_DATA_ATTR: true,
+    WHOLE_DOCUMENT: false,
+    RETURN_DOM: false,
+    FORBID_TAGS: ["script", "object", "embed"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
+  };
+
+  // Sanitize the HTML content
+  const sanitizedHtml = DOMPurify.sanitize(processedContent, sanitizeConfig);
+
+  // Determine if this is an Asana email to add special handling
+  const isAsanaEmail =
+    email.from?.emailAddress?.address?.includes("asana") ||
+    sanitizedHtml.includes("asana.com");
+
   return (
-    <div className={`email-renderer ${className}`}>
-      <iframe
-        ref={iframeRef}
-        className="w-full border-0 bg-transparent"
-        style={{ minHeight: "150px" }}
-        title={`Email from ${email?.from?.emailAddress?.name || "sender"}`}
-        sandbox="allow-same-origin"
-      />
-    </div>
+    <>
+      <style jsx global>
+        {emailStyles}
+      </style>
+      <div
+        className={`email-content ${className} ${isAsanaEmail ? "asana-email" : ""}`}
+      >
+        <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+      </div>
+    </>
   );
-}
+};
+
+export default EmailRenderer;
