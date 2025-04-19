@@ -1,19 +1,23 @@
 "use client";
 
-import { useEffect, useRef, FormEvent, ReactNode, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  FormEvent,
+  ReactNode,
+  useState,
+  useMemo,
+  useCallback,
+} from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   AlertCircle,
   Loader2,
-  Send,
-  Search,
-  Plus,
-  Paperclip,
   Reply,
   Copy,
   CheckCheck,
   ExternalLink,
+  Paperclip,
 } from "lucide-react";
 import React from "react";
 import ReactMarkdown from "react-markdown";
@@ -29,6 +33,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export type Message = {
   role: "user" | "assistant";
@@ -67,13 +78,79 @@ export interface ChatProps {
   error: string | null;
   infoComponent?: ReactNode;
   headerComponent?: ReactNode;
-  assistantName?: string;
   disabled?: boolean;
   placeholder?: string;
   userId?: string;
   emailId?: string;
   threadId?: string;
   onSendReply?: (content: string) => Promise<ReplyResponse | void>;
+}
+
+// Auto-resizing textarea component
+function AutoResizeTextarea({
+  value,
+  onChange,
+  placeholder,
+  disabled = false,
+  onSubmit,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  onSubmit?: () => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Function to adjust height based on content
+  const adjustHeight = () => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  };
+
+  // Initialize height and add event listeners
+  useEffect(() => {
+    adjustHeight();
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.addEventListener("input", adjustHeight);
+      return () => textarea.removeEventListener("input", adjustHeight);
+    }
+  }, []);
+
+  // Adjust height when value changes externally
+  useEffect(() => {
+    adjustHeight();
+  }, [value]);
+
+  // Handle key press events
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Submit on Enter (but not with Shift key)
+    if (e.key === "Enter" && !e.shiftKey && onSubmit) {
+      e.preventDefault();
+      if (value.trim()) {
+        onSubmit();
+      }
+    }
+    // Shift+Enter creates a line break (default behavior, no need to do anything)
+  };
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={handleKeyDown}
+      placeholder={placeholder}
+      disabled={disabled}
+      className="flex-1 outline-none text-sm px-2 resize-none overflow-y-auto min-h-[24px] max-h-[200px] w-full"
+      rows={1}
+      style={{ height: "50px" }}
+    />
+  );
 }
 
 export default function Chat({
@@ -85,7 +162,6 @@ export default function Chat({
   error,
   infoComponent,
   headerComponent,
-  assistantName = "Assistant",
   disabled = false,
   placeholder = "Ask anything...",
   userId = "",
@@ -93,7 +169,6 @@ export default function Chat({
   threadId,
   onSendReply,
 }: ChatProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [attachedResources, setAttachedResources] = useState<
     Microsoft365Resource[]
@@ -109,6 +184,32 @@ export default function Chat({
   const [emailSubject, setEmailSubject] = useState("");
   const [emailRecipient, setEmailRecipient] = useState("");
 
+  // Logging for debug
+  useEffect(() => {
+    if (!messages || messages.length === 0) {
+      console.log("Chat component: No messages to display");
+    } else {
+      console.log(`Chat component: Displaying ${messages.length} messages`);
+      console.log("First few messages:", messages.slice(0, 3));
+    }
+  }, [messages]);
+
+  // Validate messages format
+  const validMessages = useMemo(() => {
+    if (!Array.isArray(messages)) {
+      console.error("Invalid messages format: not an array");
+      return [];
+    }
+
+    return messages.filter(
+      (message) =>
+        message &&
+        typeof message === "object" &&
+        (message.role === "user" || message.role === "assistant") &&
+        message.content !== undefined
+    );
+  }, [messages]);
+
   // Scroll to bottom of messages when new ones come in
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -116,22 +217,104 @@ export default function Chat({
     }
   }, [messages]);
 
-  // Focus input field when loaded
-  useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, []);
-
   // Handle submitting a message
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() && attachedResources.length === 0) return;
+  const handleSubmit = async (e?: FormEvent) => {
+    if (e) {
+      e.preventDefault();
+    }
 
-    await onSubmit(input, attachedResources);
+    if (
+      !input.trim() &&
+      (!attachedResources || attachedResources.length === 0)
+    ) {
+      return;
+    }
 
-    // Clear attachments after sending
-    setAttachedResources([]);
+    try {
+      // Log attachments that include content
+      if (attachedResources.length > 0) {
+        console.log("========== LLM CONTEXT - ATTACHMENTS ==========");
+        console.log(`Sending ${attachedResources.length} attachments to LLM:`);
+
+        let totalContentSize = 0;
+
+        attachedResources.forEach((resource, idx) => {
+          console.log(`Attachment ${idx + 1}/${attachedResources.length}:`);
+          console.log(`- Type: ${resource.type}`);
+          console.log(
+            `- Name: ${resource.name || resource.subject || "Unknown"}`
+          );
+          console.log(`- ID: ${resource.id}`);
+          if (resource.type === "email") {
+            console.log(`- Subject: ${resource.subject || "No subject"}`);
+            console.log(
+              `- From: ${resource.from?.emailAddress?.name || resource.from?.emailAddress?.address || "Unknown"}`
+            );
+          }
+
+          if (resource.content) {
+            console.log(
+              `- Content length: ${resource.content.length} characters`
+            );
+            console.log(
+              `- Content preview: "${resource.content.substring(0, 100)}..."`
+            );
+            totalContentSize += resource.content.length;
+          } else {
+            console.log(`- No content extracted`);
+          }
+        });
+
+        console.log(
+          `Total content size for all attachments: ${totalContentSize} characters`
+        );
+        console.log(
+          `Average content size per attachment: ${Math.round(totalContentSize / attachedResources.length)} characters`
+        );
+        console.log("==============================================");
+      }
+
+      // Prepare message with attachments
+      const messageWithAttachments = {
+        content: input,
+        attachments:
+          attachedResources.length > 0 ? attachedResources : undefined,
+      };
+      console.log(
+        "Submitting complete message:",
+        JSON.stringify({
+          hasContent: !!messageWithAttachments.content,
+          contentLength: messageWithAttachments.content.length,
+          hasAttachments: !!messageWithAttachments.attachments,
+          attachmentsCount: messageWithAttachments.attachments?.length || 0,
+        })
+      );
+
+      // Call the parent submit handler
+      await onSubmit(
+        input,
+        attachedResources.length > 0 ? attachedResources : undefined
+      );
+
+      // Reset input and attached resources
+      setInput("");
+      setAttachedResources([]);
+
+      // Log for debugging
+      console.log(
+        "Message submitted successfully. Current valid message count:",
+        validMessages.length
+      );
+
+      if (attachedResources.length > 0) {
+        console.log(
+          "Attachments were included in message:",
+          attachedResources.length
+        );
+      }
+    } catch (err) {
+      console.error("Error submitting message:", err);
+    }
   };
 
   // Handle selecting resources from the picker
@@ -205,9 +388,13 @@ export default function Chat({
           setTimeout(() => setReplySuccess(false), 5000);
         }, 1000);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error sending reply:", error);
-      setReplyError(error.message || "Kunne ikke sende svar. Prøv igjen.");
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Kunne ikke sende svar. Prøv igjen.";
+      setReplyError(errorMessage);
       setTimeout(() => setReplyError(null), 5000);
     } finally {
       setIsSendingReply(false);
@@ -232,252 +419,230 @@ export default function Chat({
     setShowReplyPreview(false);
   };
 
+  // Copy message content
+  const copyMessageContent = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      // Could add a visual indicator here
+    } catch (err) {
+      console.error("Failed to copy message:", err);
+    }
+  };
+
+  const renderResourceContent = useCallback(
+    (resource: Microsoft365Resource) => {
+      if (resource.type === "email") {
+        if (resource.content) {
+          return (
+            <div className="text-sm whitespace-pre-line">
+              {resource.content}
+            </div>
+          );
+        } else {
+          return (
+            <div className="text-sm text-gray-500 italic">
+              Email content not available. Try viewing the message in your email
+              client.
+            </div>
+          );
+        }
+      } else if (resource.type === "file" || resource.type === "files") {
+        // Handle file content
+        // ...
+      }
+
+      // Default fallback
+      return <div className="text-sm">Content not available</div>;
+    },
+    []
+  );
+
+  const getResourceTitle = useCallback(
+    (resource: Microsoft365Resource): string => {
+      if (resource.type === "email") {
+        return resource.subject || resource.name || "Email";
+      } else if (resource.type === "file" || resource.type === "files") {
+        return resource.name || "File";
+      }
+
+      // Default fallback
+      return resource.name || "Attachment";
+    },
+    []
+  );
+
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-gray-50">
-      {/* Header */}
+    <div className="flex flex-col h-screen max-h-screen bg-white">
+      {/* Header - Only show if custom header provided */}
       {headerComponent}
 
       {/* Messages area - Takes available space */}
       <div className="flex-1 overflow-y-auto p-4">
         {/* Display error message if any */}
         {error && (
-          <div className="bg-destructive/10 text-destructive p-3 rounded-md mb-4 flex items-start gap-2">
+          <div className="bg-destructive/10 text-destructive p-3 rounded-md mb-4 flex items-start gap-2 max-w-3xl mx-auto">
             <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
             <div className="text-sm">{error}</div>
           </div>
         )}
 
         {/* Messages */}
-        <div className="w-full">
-          <div className="max-w-3xl mx-auto">
-            {/* Info component - only shown initially */}
-            {messages.length <= 1 && !error && infoComponent}
+        <div className="max-w-3xl mx-auto space-y-8">
+          {/* Info component - only shown initially */}
+          {validMessages.length <= 1 && !error && infoComponent}
 
-            <div className="space-y-6">
-              {messages.map((message, index) => (
-                <div key={index} className="w-full">
-                  {message.role === "user" ? (
-                    <div className="flex justify-end mb-2">
-                      <div className="bg-[#5E5ADB] text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%] shadow-sm">
-                        {message.attachments &&
-                          message.attachments.length > 0 && (
-                            <AttachedResources
-                              resources={message.attachments}
-                              className="mb-3"
-                              readonly
-                            />
-                          )}
-                        {message.content}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="w-full">
-                      <div className="mb-2 text-sm font-medium text-gray-600 px-1">
-                        {assistantName}
-                      </div>
-                      <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-6 py-4 text-gray-800 shadow-sm pb-6 relative">
-                        {message.content ? (
-                          <div className="prose prose-sm max-w-none text-gray-800">
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                // Style headers
-                                h1: ({ ...props }) => (
-                                  <h1
-                                    className="text-xl font-bold mt-6 mb-3"
+          {validMessages.map((message, index) => (
+            <div key={index} className="w-full">
+              {message.role === "user" ? (
+                <div className="flex flex-col items-end space-y-2">
+                  <div className="bg-gray-100 rounded-2xl py-3 px-5 max-w-xs sm:max-w-md">
+                    {message.attachments && message.attachments.length > 0 && (
+                      <AttachedResources
+                        resources={message.attachments}
+                        className="mb-4"
+                        readonly
+                      />
+                    )}
+                    <p className="text-sm font-medium">{message.content}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col space-y-2">
+                  <div className="bg-white border rounded-2xl py-4 px-5">
+                    {message.content ? (
+                      <>
+                        <div className="prose prose-sm max-w-none text-gray-800">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              p: ({ children, ...props }) => (
+                                <p
+                                  className="text-sm mb-4 leading-relaxed"
+                                  {...props}
+                                >
+                                  {children}
+                                </p>
+                              ),
+                              ul: ({ ...props }) => (
+                                <ul
+                                  className="my-4 ml-6 space-y-3 list-disc"
+                                  {...props}
+                                />
+                              ),
+                              ol: ({ ...props }) => (
+                                <ol
+                                  className="my-4 ml-6 space-y-3 list-decimal"
+                                  {...props}
+                                />
+                              ),
+                              li: ({ children, ...props }) => (
+                                <li
+                                  className="text-sm mb-1 leading-relaxed"
+                                  {...props}
+                                >
+                                  {children}
+                                </li>
+                              ),
+                              code: ({ className, children, ...props }) => {
+                                return className?.includes("inline") ? (
+                                  <code
+                                    className="px-1 py-0.5 bg-gray-100 rounded text-sm font-mono"
                                     {...props}
-                                  />
-                                ),
-                                h2: ({ ...props }) => (
-                                  <h2
-                                    className="text-lg font-semibold mt-5 mb-3"
-                                    {...props}
-                                  />
-                                ),
-                                h3: ({ ...props }) => (
-                                  <h3
-                                    className="text-md font-semibold mt-5 mb-3"
-                                    {...props}
-                                  />
-                                ),
-                                h4: ({ ...props }) => (
-                                  <h4
-                                    className="text-base font-semibold mt-4 mb-2"
-                                    {...props}
-                                  />
-                                ),
-
-                                // Style paragraphs
-                                p: ({ ...props }) => (
-                                  <p
-                                    className="my-3 leading-relaxed"
-                                    {...props}
-                                  />
-                                ),
-
-                                // Style lists
-                                ul: ({ ...props }) => (
-                                  <ul
-                                    className="my-3 ml-6 space-y-2 list-disc"
-                                    {...props}
-                                  />
-                                ),
-                                ol: ({ ...props }) => (
-                                  <ol
-                                    className="my-3 ml-6 space-y-2 list-decimal"
-                                    {...props}
-                                  />
-                                ),
-                                li: ({ children, ...props }) => {
-                                  return (
-                                    <li className="my-1" {...props}>
-                                      {children}
-                                    </li>
-                                  );
-                                },
-
-                                // Style tables
-                                table: ({ ...props }) => (
-                                  <div className="my-4 overflow-x-auto">
-                                    <table
-                                      className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-md"
-                                      {...props}
-                                    />
-                                  </div>
-                                ),
-                                thead: ({ ...props }) => (
-                                  <thead className="bg-gray-50" {...props} />
-                                ),
-                                tbody: ({ ...props }) => (
-                                  <tbody
-                                    className="bg-white divide-y divide-gray-200"
-                                    {...props}
-                                  />
-                                ),
-                                tr: ({ ...props }) => (
-                                  <tr
-                                    className="border-b border-gray-200"
-                                    {...props}
-                                  />
-                                ),
-                                th: ({ ...props }) => (
-                                  <th
-                                    className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider border-r border-gray-200 last:border-r-0"
-                                    {...props}
-                                  />
-                                ),
-                                td: ({ ...props }) => (
-                                  <td
-                                    className="px-3 py-2 text-sm text-gray-700 border-r border-gray-200 last:border-r-0"
-                                    {...props}
-                                  />
-                                ),
-
-                                // Style code blocks
-                                code: ({ className, children, ...props }) => {
-                                  return className?.includes("inline") ? (
-                                    <code
-                                      className="px-1 py-0.5 bg-gray-100 rounded text-sm font-mono"
-                                      {...props}
-                                    >
+                                  >
+                                    {children}
+                                  </code>
+                                ) : (
+                                  <pre className="p-3 bg-gray-50 rounded-md overflow-auto text-sm my-4 font-mono">
+                                    <code className={className} {...props}>
                                       {children}
                                     </code>
-                                  ) : (
-                                    <pre className="p-3 bg-gray-50 rounded-md overflow-auto text-sm my-3 font-mono">
-                                      <code className={className} {...props}>
-                                        {children}
-                                      </code>
-                                    </pre>
-                                  );
-                                },
-                              }}
-                            >
-                              {message.content}
-                            </ReactMarkdown>
+                                  </pre>
+                                );
+                              },
+                            }}
+                          >
+                            {message.content}
+                          </ReactMarkdown>
 
-                            {/* Reply button - only show for assistant messages with content and when emailId or threadId is available */}
-                            {(emailId || threadId || index > 0) && (
-                              <div className="mt-4 flex gap-2 items-center">
-                                {(emailId || threadId) &&
-                                onSendReply &&
-                                message.content.trim() &&
-                                index > 0 ? (
-                                  <>
-                                    {isSendingReply ? (
-                                      <Button
-                                        disabled
-                                        className="text-xs h-8 bg-blue-500"
-                                      >
-                                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                                        Forbereder svar...
-                                      </Button>
-                                    ) : replySuccess ? (
-                                      <div className="text-green-600 text-xs flex items-center">
-                                        <span>✓</span> Outlook åpnet!
-                                      </div>
-                                    ) : (
-                                      <Button
-                                        onClick={() =>
-                                          handleSendReply(message.content)
-                                        }
-                                        className="text-xs h-8 bg-blue-500 hover:bg-blue-600"
-                                        size="sm"
-                                      >
-                                        <Reply className="h-3 w-3 mr-1" />
-                                        Send som svar
-                                      </Button>
-                                    )}
-                                    {replyError && (
-                                      <div className="text-red-500 text-xs">
-                                        {replyError}
-                                      </div>
-                                    )}
-                                  </>
-                                ) : (
-                                  <div className="text-xs text-gray-400">
-                                    {!emailId && !threadId
-                                      ? "Mangler ID"
-                                      : !onSendReply
-                                      ? "Mangler onSendReply"
-                                      : !message.content.trim()
-                                      ? "Tomt innhold"
-                                      : index === 0
-                                      ? "Første melding"
-                                      : "Ukjent feil"}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                          <div className="flex items-center mt-3">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="rounded-full h-8 w-8"
+                              onClick={() =>
+                                copyMessageContent(message.content)
+                              }
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+
+                            {/* Reply button - only show for assistant messages with content */}
+                            {(emailId || threadId) &&
+                              onSendReply &&
+                              message.content.trim() &&
+                              index > 0 && (
+                                <Button
+                                  onClick={() =>
+                                    handleSendReply(message.content)
+                                  }
+                                  className="text-xs h-8 ml-2"
+                                  size="sm"
+                                  variant="ghost"
+                                >
+                                  {isSendingReply ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                      Preparing...
+                                    </>
+                                  ) : replySuccess ? (
+                                    <div className="text-green-600 text-xs flex items-center">
+                                      <CheckCheck className="h-3 w-3 mr-1" />
+                                      Sent!
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <Reply className="h-3 w-3 mr-1" />
+                                      Reply
+                                    </>
+                                  )}
+                                </Button>
+                              )}
                           </div>
-                        ) : isLoading ? (
-                          <div className="flex items-center">
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mr-1"></div>
-                            <div
-                              className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mr-1"
-                              style={{ animationDelay: "0.2s" }}
-                            ></div>
-                            <div
-                              className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"
-                              style={{ animationDelay: "0.4s" }}
-                            ></div>
-                          </div>
-                        ) : (
-                          ""
-                        )}
+
+                          {replyError && (
+                            <div className="text-red-500 text-xs mt-2">
+                              {replyError}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    ) : isLoading ? (
+                      <div className="flex items-center">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mr-1"></div>
+                        <div
+                          className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mr-1"
+                          style={{ animationDelay: "0.2s" }}
+                        ></div>
+                        <div
+                          className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"
+                          style={{ animationDelay: "0.4s" }}
+                        ></div>
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      ""
+                    )}
+                  </div>
                 </div>
-              ))}
+              )}
             </div>
-            <div ref={messagesEndRef} />
-          </div>
+          ))}
+          <div ref={messagesEndRef} />
         </div>
       </div>
 
       {/* Input area with attachment support - Fixed at bottom */}
-      <div className="border-t bg-white py-4 w-full">
-        <div className="max-w-3xl mx-auto px-4">
+      <div className="p-4 border-t">
+        <div className="max-w-3xl mx-auto">
           {/* Attached resources display */}
           <AnimatePresence>
             {attachedResources.length > 0 && (
@@ -495,119 +660,32 @@ export default function Chat({
             )}
           </AnimatePresence>
 
-          <form onSubmit={handleSubmit} className="relative">
-            <div className="bg-white border rounded-3xl shadow-sm px-4 py-3 focus-within:ring-1 focus-within:ring-[#5E5ADB] border-gray-200">
-              <Input
-                ref={inputRef}
-                type="text"
-                placeholder={placeholder}
-                className="w-full py-2 px-0 border-0 focus:ring-0 focus:outline-none text-sm bg-transparent"
+          <form onSubmit={handleSubmit}>
+            <div className="border rounded-2xl p-3 flex items-start">
+              <AutoResizeTextarea
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={setInput}
+                placeholder={placeholder}
                 disabled={disabled || isLoading}
+                onSubmit={handleSubmit}
               />
-              <div className="flex justify-between items-center mt-1">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 text-gray-600 hover:text-gray-800 text-sm"
-                    onClick={() => setIsResourcePickerOpen(true)}
-                    disabled={disabled || isLoading}
-                  >
-                    <svg
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      className="h-4 w-4"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path
-                        d="M21 14l-9 7-9-7m18-5l-9 7-9-7m18-5l-9 7-9-7"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <span>Add</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 text-sm bg-[#C6F551] text-gray-800 font-medium px-3 py-1 rounded-full"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-4 w-4"
-                    >
-                      <path
-                        d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M12 8V16"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M8 12H16"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <span>Web</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 text-gray-600 hover:text-gray-800 text-sm"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-4 w-4"
-                    >
-                      <path
-                        d="M3 6H21"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M7 12H17"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <path
-                        d="M10 18H14"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <span>Filters</span>
-                  </button>
-                </div>
+              <div className="flex items-center gap-2 mt-1 ml-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() => setIsResourcePickerOpen(true)}
+                  disabled={disabled || isLoading}
+                >
+                  <Paperclip className="h-4 w-4 mr-1" />
+                  Add
+                </Button>
                 <Button
                   type="submit"
-                  className="rounded-full h-9 w-9 p-0 flex items-center justify-center bg-gray-900 hover:bg-gray-800 transition-colors"
+                  variant="default"
+                  size="icon"
+                  className="rounded-full h-8 w-8 bg-black hover:bg-gray-800 ml-1"
                   disabled={
                     (!input.trim() && attachedResources.length === 0) ||
                     disabled ||
@@ -627,7 +705,7 @@ export default function Chat({
                       strokeWidth="2"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className="h-5 w-5 text-white"
+                      className="h-4 w-4 text-white"
                     >
                       <path d="M12 19V5M5 12l7-7 7 7" />
                     </svg>

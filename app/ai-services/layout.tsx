@@ -11,10 +11,5 @@ export default function AIServicesLayout({
 }: {
   children: ReactNode;
 }) {
-  return (
-    <div className="flex h-full">
-      {/* Main content */}
-      <div className="flex-1 overflow-auto">{children}</div>
-    </div>
-  );
+  return <>{children}</>;
 } 

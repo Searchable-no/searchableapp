@@ -190,10 +190,10 @@ export async function POST(request: NextRequest) {
                   ...attachment,
                   content: documentContent.content
                 };
-              } catch (analyzeError: any) {
+              } catch (analyzeError: unknown) {
                 console.error(`Error analyzing document "${attachment.name}":`, analyzeError);
                 // Add error to system message but continue processing other attachments
-                emailContext += `\nNote: Failed to analyze document "${attachment.name}" due to: ${analyzeError.message}`;
+                emailContext += `\nNote: Failed to analyze document "${attachment.name}" due to: ${analyzeError instanceof Error ? analyzeError.message : String(analyzeError)}`;
                 return attachment;
               }
             } else {
@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
       }));
       
       // Format attachment descriptions, now including content where available
-      const attachmentDescriptions = processedAttachments.map((attachment: Microsoft365Resource, idx: number) => {
+      const attachmentDescriptions = processedAttachments.map((attachment: Microsoft365Resource) => {
         if (attachment.type === "email") {
           return `- Email: "${attachment.name}" from ${attachment.from?.emailAddress?.name || attachment.from?.emailAddress?.address || "Unknown"}`;
         } else {
@@ -369,7 +369,9 @@ Received: ${new Date(email.receivedDateTime).toLocaleString()}
 Body: ${emailContent}
 
 You always respond in Norwegian unless explicitly asked to use another language.
-Please help the user craft a professional and appropriate response to this email. You may suggest complete email replies or help them structure their thoughts. Keep your suggestions relevant to the email content and context.le 
+Please help the user craft a professional and appropriate response to this email. You may suggest complete email replies or help them structure their thoughts. Keep your suggestions relevant to the email content and context.
+
+Make sure to format your responses with headings, bullet points, and other markdown elements to improve readability. Use sections with clear headings when providing structured information, and use bullet points or numbered lists for multiple points or steps.
 `;
 }
 
@@ -440,6 +442,8 @@ ${threadSummary}
 
 You always respond in Norwegian unless explicitly asked to use another language.
 Please help the user craft a professional and appropriate response to this email thread. You may suggest complete email replies or help them structure their thoughts. Keep your suggestions relevant to the discussion history and context. Be aware of the full conversation history when formulating your response.
+
+Make sure to format your responses with headings, bullet points, and other markdown elements to improve readability. Use sections with clear headings when providing structured information, and use bullet points or numbered lists for multiple points or steps.
 `;
 }
 

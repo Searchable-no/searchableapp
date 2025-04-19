@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Metadata } from "next";
-import { FileAudio, Mail, Sparkles, Newspaper } from "lucide-react";
+import { FileAudio, Mail, Sparkles, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-export const metadata: Metadata = {
-  title: "AI Tjenester | Searchable",
-  description: "AI tjenester for transkribering, oppsummering og mer",
-};
 
 export default function AIServicesPage() {
   const services = [
+    {
+      title: "Generell Chat",
+      description: "Chat med vår AI-assistent om hva som helst",
+      icon: MessageSquare,
+      href: "/ai-services/chat",
+    },
     {
       title: "Transkribering",
       description: "Last opp lydfiler og få teksttranskripsjon med AI",
@@ -23,12 +23,6 @@ export default function AIServicesPage() {
       description: "Få hjelp med e-post og kommunikasjonsoppgaver",
       icon: Mail,
       href: "/ai-services/email",
-    },
-    {
-      title: "AI News",
-      description: "Få oppsummering av nyheter fra dine favorittkilder",
-      icon: Newspaper,
-      href: "/ai-services/ai-news",
     },
   ];
 

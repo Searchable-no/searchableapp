@@ -1,12 +1,22 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronDown, Eye, EyeOff, MoreVertical, Mail } from "lucide-react";
+import {
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Mail,
+  ArrowLeft,
+  ChevronRight,
+} from "lucide-react";
 import React from "react";
 import Chat, { Message } from "@/components/ai-services/Chat";
 import { Button } from "@/components/ui/button";
 import { Microsoft365Resource } from "@/components/ai-services/ResourcePicker";
 import { toast } from "@/components/ui/use-toast";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { chatHistoryService } from "@/services/chatHistoryService";
 
 type EmailAddress = {
   name?: string;
@@ -50,8 +60,18 @@ export default function EmailChatPage() {
   const [selectedModel, setSelectedModel] = useState<ModelOption>("gpt-4o");
   const [showEmailContent, setShowEmailContent] = useState(false);
   const [userId, setUserId] = useState<string>("");
-  const [isReplying, setIsReplying] = useState(false);
-  const [replyError, setReplyError] = useState<string | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnToEmail = searchParams.get("returnToEmail") === "true";
+  const [returnInfo, setReturnInfo] = useState<{
+    returnPath: string;
+    threadId?: string;
+    emailId?: string;
+    timestamp: number;
+    label: string;
+  } | null>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const { user } = useCurrentUser();
 
   // Get email ID/thread ID and subject from URL parameters
   useEffect(() => {
@@ -60,10 +80,11 @@ export default function EmailChatPage() {
     const thread = params.get("threadId");
     const subject = params.get("subject") || "E-post";
     const userIdParam = params.get("userId");
+    const historyChatId = params.get("chatId");
 
-    if (!id && !thread) {
-      console.error("No email ID or thread ID found in URL");
-      setError("No email ID or thread ID found in URL");
+    if (!id && !thread && !historyChatId) {
+      console.error("No email ID, thread ID, or chat history ID found in URL");
+      setError("No email ID, thread ID, or chat history ID found in URL");
       return;
     }
 
@@ -71,15 +92,43 @@ export default function EmailChatPage() {
       setUserId(userIdParam);
     }
 
-    if (id) {
+    setEmailSubject(decodeURIComponent(subject));
+
+    // If we have a chat history ID, load that first, but only if user is loaded
+    if (historyChatId) {
+      setChatId(historyChatId);
+      // Only load chat history if user is already available
+      if (user?.id) {
+        loadChatHistory(historyChatId);
+      }
+    } else if (id) {
       setEmailId(id);
       handleSingleEmail(id, subject);
     } else if (thread) {
       setThreadId(thread);
       handleEmailThread(thread, subject);
     }
+  }, []);
 
-    setEmailSubject(decodeURIComponent(subject));
+  // Add a separate effect to handle chat loading when user becomes available
+  useEffect(() => {
+    // If we have chatId but couldn't load it earlier because user wasn't loaded
+    if (chatId && user?.id) {
+      loadChatHistory(chatId);
+    }
+  }, [user, chatId]);
+
+  useEffect(() => {
+    // Get the stored return information
+    const storedReturnInfo = localStorage.getItem("emailReturnInfo");
+    if (storedReturnInfo) {
+      try {
+        const parsedInfo = JSON.parse(storedReturnInfo);
+        setReturnInfo(parsedInfo);
+      } catch (e) {
+        console.error("Failed to parse return info:", e);
+      }
+    }
   }, []);
 
   const handleSingleEmail = (id: string, subject: string) => {
@@ -259,6 +308,157 @@ export default function EmailChatPage() {
       });
   };
 
+  // Load chat history if chat ID is provided
+  const loadChatHistory = async (historyChatId: string) => {
+    try {
+      // Ensure user is logged in
+      if (!user?.id) {
+        console.error("Cannot load chat history: User not logged in");
+        return;
+      }
+
+      console.log("Loading email chat history:", historyChatId);
+      const chatHistory = await chatHistoryService.getChatById(historyChatId);
+
+      console.log(
+        "Email chat history loaded:",
+        JSON.stringify(chatHistory, null, 2)
+      );
+
+      if (!chatHistory) {
+        console.error("Chat history not found for ID:", historyChatId);
+        setError("Chat ikke funnet");
+        return;
+      }
+
+      if (chatHistory.user_id !== user.id) {
+        console.error("Chat history not owned by this user");
+        setError("Du har ikke tilgang til denne chatten");
+        return;
+      }
+
+      // Validate chat content structure
+      if (
+        !chatHistory.content ||
+        !Array.isArray(chatHistory.content.messages)
+      ) {
+        console.error("Invalid chat content structure:", chatHistory.content);
+        setError("Ugyldig chathistorikk-struktur");
+        return;
+      }
+
+      // Validate and map messages
+      const validMessages = chatHistory.content.messages
+        .filter(
+          (msg) =>
+            msg && typeof msg === "object" && "role" in msg && "content" in msg
+        )
+        .map((msg) => ({
+          role: msg.role as "user" | "assistant",
+          content: msg.content as string,
+          attachments: msg.attachments || undefined,
+        }));
+
+      console.log("Valid email chat messages found:", validMessages.length);
+
+      // Set messages
+      setMessages(validMessages);
+
+      // Set email ID or thread ID from thread_id
+      if (chatHistory.thread_id) {
+        console.log("Found thread_id:", chatHistory.thread_id);
+
+        if (chatHistory.metadata?.isEmailThread) {
+          console.log(
+            "Is email thread chat with metadata:",
+            chatHistory.metadata
+          );
+          setThreadId(chatHistory.thread_id);
+
+          // Also load the email thread data
+          const emailThreadData = chatHistory.metadata?.emailThread as
+            | EmailMessage[]
+            | undefined;
+          if (
+            emailThreadData &&
+            Array.isArray(emailThreadData) &&
+            emailThreadData.length > 0
+          ) {
+            console.log(
+              "Setting email thread data, length:",
+              emailThreadData.length
+            );
+            setEmailThread(emailThreadData);
+            setStoredEmail(emailThreadData[0]);
+          } else {
+            console.error(
+              "Email thread data missing or invalid:",
+              emailThreadData
+            );
+          }
+        } else {
+          console.log("Is single email chat");
+          setEmailId(chatHistory.thread_id);
+
+          // Also load the email data
+          const storedEmailData = chatHistory.metadata?.storedEmail as
+            | EmailMessage
+            | undefined;
+          if (storedEmailData) {
+            console.log("Setting stored email data:", storedEmailData.id);
+            setStoredEmail(storedEmailData);
+          } else {
+            console.error("Stored email data missing from metadata");
+          }
+        }
+      } else {
+        console.error("No thread_id found in chat history");
+      }
+    } catch (error) {
+      console.error("Error loading email chat history:", error);
+      setError("Kunne ikke laste chathistorikk");
+    }
+  };
+
+  // Save chat history to Supabase
+  const saveChatHistory = async (messagesArray: Message[]) => {
+    if (!user?.id) return null;
+
+    try {
+      const isThreadChat =
+        !!threadId &&
+        !!emailThread &&
+        Array.isArray(emailThread) &&
+        emailThread.length > 0;
+      const threadOrEmailId = isThreadChat ? threadId : emailId;
+
+      if (!threadOrEmailId) return null;
+
+      const metadata: Record<string, unknown> = isThreadChat
+        ? { emailThread, isEmailThread: true }
+        : { storedEmail, isEmailThread: false };
+
+      const savedChatId = await chatHistoryService.saveChat(
+        user.id,
+        "email",
+        messagesArray,
+        emailSubject,
+        threadOrEmailId,
+        metadata,
+        chatId || undefined
+      );
+
+      if (savedChatId && !chatId) {
+        setChatId(savedChatId);
+      }
+
+      return savedChatId;
+    } catch (error) {
+      console.error("Error saving chat history:", error);
+      return null;
+    }
+  };
+
   // Handle submitting a message
   const handleSubmit = async (
     message: string,
@@ -277,7 +477,14 @@ export default function EmailChatPage() {
       content: message,
       attachments,
     };
-    setMessages((prev) => [...prev, userMessage]);
+
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+
+    // Save chat history with user message
+    if (user?.id) {
+      saveChatHistory(updatedMessages);
+    }
 
     // Clear input field
     setInput("");
@@ -294,7 +501,7 @@ export default function EmailChatPage() {
         },
         credentials: "include",
         body: JSON.stringify({
-          messages: [...messages, userMessage],
+          messages: updatedMessages,
           model: selectedModel,
           emailId: emailId || undefined,
           storedEmail: storedEmail || undefined,
@@ -347,7 +554,11 @@ export default function EmailChatPage() {
       let assistantMessage = "";
 
       // Create a placeholder for the streaming message
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+      const messagesWithPlaceholder = [
+        ...updatedMessages,
+        { role: "assistant" as const, content: "" },
+      ];
+      setMessages(messagesWithPlaceholder);
 
       // Read the stream
       while (true) {
@@ -359,14 +570,28 @@ export default function EmailChatPage() {
         assistantMessage += chunk;
 
         // Update the assistant message with what we've received so far
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          newMessages[newMessages.length - 1] = {
-            role: "assistant",
+        const updatedMessagesWithAssistant = [
+          ...updatedMessages,
+          {
+            role: "assistant" as const,
             content: assistantMessage,
-          };
-          return newMessages;
-        });
+          },
+        ];
+
+        setMessages(updatedMessagesWithAssistant);
+      }
+
+      // Save the complete conversation to chat history
+      const finalMessages = [
+        ...updatedMessages,
+        {
+          role: "assistant" as const,
+          content: assistantMessage,
+        },
+      ];
+
+      if (user?.id) {
+        saveChatHistory(finalMessages);
       }
     } catch (error) {
       console.error("Error in chat:", error);
@@ -376,121 +601,89 @@ export default function EmailChatPage() {
     }
   };
 
-  // Handle sending a reply to the email
-  const handleSendReply = async (content: string) => {
-    console.log("EmailChatPage.handleSendReply called with: ", {
-      emailId: emailId,
-      threadId: threadId,
-      storedEmailId: storedEmail?.id,
-      hasContent: !!content?.trim(),
-      contentLength: content?.length || 0,
+  // Function to send a reply to an email
+  const sendReply = async (emailId: string, content: string) => {
+    console.log("Sending reply to email: ", emailId);
+
+    if (!content.trim()) {
+      throw new Error("Cannot send reply without content");
+    }
+
+    const response = await fetch("/api/ai-services/email/reply", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        emailId: emailId,
+        threadId: threadId,
+        content,
+      }),
     });
 
-    // Bruk threadId dersom emailId ikke er tilgjengelig
-    const messageId =
-      emailId || (storedEmail && storedEmail.id ? storedEmail.id : null);
+    // Get the full response
+    const responseText = await response.text();
+    let responseData;
 
-    if ((!messageId && !threadId) || !content.trim()) {
-      console.error("Cannot send reply without email/thread ID or content", {
-        hasEmailId: !!messageId,
-        hasThreadId: !!threadId,
-        hasContent: !!content?.trim(),
-      });
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse API response:", e);
+      console.error("Raw response:", responseText);
+      throw new Error("Server returned invalid response");
+    }
+
+    if (!response.ok) {
+      const errorMessage =
+        responseData.error || `Server returned error code ${response.status}`;
+      throw new Error(errorMessage);
+    }
+
+    // Handle the action response
+    if (
+      responseData.action &&
+      responseData.action.type === "outlook_redirect"
+    ) {
+      console.log("Outlook redirect action detected");
+      return responseData;
+    }
+
+    return responseData;
+  };
+
+  const handleSendReply = async (replyText: string) => {
+    if (!storedEmail || !emailId) {
       toast({
-        title: "Kan ikke sende svar",
-        description: "Mangler e-post ID eller innhold",
+        title: "E-post ikke funnet",
+        description: "Kunne ikke finne e-posten for å svare på",
         variant: "destructive",
-        duration: 5000,
       });
       return;
     }
 
-    setIsReplying(true);
-    setReplyError(null);
-
     try {
-      // Bruk det mest relevante ID-et for å svare
-      const effectiveId = messageId || threadId;
-      const isThread = !messageId && !!threadId;
-
-      console.log(
-        `Sending reply using ${
-          isThread ? "threadId" : "emailId"
-        }: ${effectiveId}, content length: ${content.length}`
-      );
-
-      const response = await fetch("/api/ai-services/email/reply", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include", // Viktig for autentisering
-        body: JSON.stringify({
-          emailId: messageId,
-          threadId: threadId,
-          isThread: isThread,
-          content,
-        }),
-      });
-
-      console.log(`Reply API response status: ${response.status}`);
-
-      // Få den fullstendige responsen
-      const responseText = await response.text();
-      let responseData;
-
-      try {
-        // Prøv å tolke JSON-responsen
-        responseData = JSON.parse(responseText);
-        console.log("Reply API response data:", responseData);
-      } catch (e) {
-        console.error("Failed to parse API response:", e);
-        console.error("Raw response:", responseText);
-        throw new Error("Serveren returnerte ugyldig respons");
-      }
-
-      if (!response.ok) {
-        // Vis detaljert feilmelding fra serveren om tilgjengelig
-        const errorMessage =
-          responseData.error || `Server returnerte feilkode ${response.status}`;
-        throw new Error(errorMessage);
-      }
-
-      // Håndter den nye action-responsen
-      if (
-        responseData.action &&
-        responseData.action.type === "outlook_redirect"
-      ) {
-        console.log("Outlook redirect action detected");
-
-        // Returner hele responseData til Chat-komponenten
-        return responseData;
-      }
-
-      console.log("Reply sent successfully:", responseData);
+      await sendReply(emailId, replyText);
 
       toast({
         title: "Svar sendt",
-        description:
-          "E-posten ble sendt som svar på den opprinnelige meldingen.",
-        duration: 3000,
+        description: "Ditt svar ble sendt",
       });
 
-      return responseData;
-    } catch (error: any) {
-      console.error("Error sending reply:", error);
+      if (returnInfo?.returnPath) {
+        router.push(returnInfo.returnPath);
+      }
+    } catch (error: unknown) {
       const errorMessage =
-        error.message || "Det oppstod en feil ved sending av svar";
-      setReplyError(errorMessage);
+        error instanceof Error
+          ? error.message
+          : "Det oppstod en feil ved sending av svar";
       toast({
         title: "Kunne ikke sende svar",
         description: errorMessage,
         variant: "destructive",
-        duration: 5000,
       });
       throw error;
-    } finally {
-      setIsReplying(false);
     }
   };
 
@@ -503,7 +696,7 @@ export default function EmailChatPage() {
   const renderEmailContent = () => {
     if (emailThread && emailThread.length > 0) {
       return (
-        <div className="fixed top-[76px] right-4 z-10 bg-muted/30 p-3 rounded-lg mb-4 max-h-[500px] overflow-y-auto w-[450px] shadow-md">
+        <div className="absolute top-4 right-4 z-10 bg-white/95 p-3 rounded-lg shadow-md max-h-[calc(100vh-120px)] overflow-y-auto w-[450px] max-w-[90vw]">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-medium">
               E-posttråd ({emailThread.length} e-poster)
@@ -551,7 +744,7 @@ export default function EmailChatPage() {
       );
     } else if (storedEmail) {
       return (
-        <div className="fixed top-[76px] right-4 z-10 bg-muted/30 p-3 rounded-lg mb-4 max-h-[500px] overflow-y-auto w-[450px] shadow-md">
+        <div className="absolute top-4 right-4 z-10 bg-white/95 p-3 rounded-lg shadow-md max-h-[calc(100vh-120px)] overflow-y-auto w-[450px] max-w-[90vw]">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-medium">E-post</h3>
             <Button
@@ -595,92 +788,137 @@ export default function EmailChatPage() {
     return null;
   };
 
-  // Header Component
-  const HeaderComponent = () => (
-    <header className="flex items-center justify-between px-4 py-2 border-b shadow-sm">
-      <div className="flex items-center gap-2">
-        <div className="flex items-center">
-          <Mail className="h-5 w-5 text-primary mr-2" />
-          <h1 className="text-lg font-semibold">{emailSubject}</h1>
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <div className="relative">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs"
-            onClick={() => document.getElementById("model-dropdown")?.click()}
-          >
-            <span className="mr-1">{selectedModel}</span>
-            <ChevronDown className="h-3 w-3" />
-          </Button>
-          <select
-            id="model-dropdown"
-            value={selectedModel}
-            onChange={(e) => handleModelSelect(e.target.value as ModelOption)}
-            className="absolute opacity-0 top-0 left-0 w-full h-full cursor-pointer"
-          >
-            <option value="gpt-4o">GPT-4o</option>
-            <option value="o4-mini">GPT-4o Mini</option>
-            <option value="gpt-4.1">GPT-4.1</option>
-          </select>
-        </div>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs"
-          onClick={() => setShowEmailContent(!showEmailContent)}
-        >
-          {showEmailContent ? (
-            <>
-              <EyeOff className="h-4 w-4 mr-1" />
-              Skjul e-post
-            </>
-          ) : (
-            <>
-              <Eye className="h-4 w-4 mr-1" />
-              Vis e-post
-            </>
-          )}
-        </Button>
-
-        <button className="text-gray-500 hover:text-gray-700 p-1 rounded">
-          <MoreVertical className="h-4 w-4" />
-        </button>
-      </div>
-    </header>
-  );
-
   // Render the current email content if it's visible
   const emailContentDisplay = showEmailContent ? renderEmailContent() : null;
 
   // Log the emailId value to help with debugging
   console.log(`Rendering Chat with emailId: ${emailId || "undefined"}`);
 
+  const handleReturnToEmail = () => {
+    if (returnInfo?.returnPath) {
+      router.push(returnInfo.returnPath);
+    } else {
+      // Default fallback
+      router.push("/ai-services/email");
+    }
+  };
+
+  // Combined header component with Back to Email button and model selection
+  const HeaderComponent = () => (
+    <header className="flex flex-col border-b shadow-sm">
+      {/* Breadcrumb navigation */}
+      <div className="px-4 py-2 border-b">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <a
+            href="/ai-services"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            AI Tjenester
+          </a>
+          <ChevronRight className="h-3 w-3" />
+          <button
+            onClick={handleReturnToEmail}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            E-post
+          </button>
+          <ChevronRight className="h-3 w-3" />
+          <span className="font-medium text-foreground">Chat</span>
+        </div>
+      </div>
+
+      {/* Header with title and controls */}
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          {returnToEmail ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-zinc-600 hover:text-zinc-900"
+              onClick={handleReturnToEmail}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="text-sm">Tilbake</span>
+            </Button>
+          ) : (
+            <div className="flex items-center">
+              <Mail className="h-5 w-5 text-primary mr-2" />
+              <h1 className="text-md font-medium">{emailSubject}</h1>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={() => document.getElementById("model-dropdown")?.click()}
+            >
+              <span className="mr-1">{selectedModel}</span>
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+            <select
+              id="model-dropdown"
+              value={selectedModel}
+              onChange={(e) => handleModelSelect(e.target.value as ModelOption)}
+              className="absolute opacity-0 top-0 left-0 w-full h-full cursor-pointer"
+            >
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="o4-mini">GPT-4o Mini</option>
+              <option value="gpt-4.1">GPT-4.1</option>
+            </select>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs"
+            onClick={() => setShowEmailContent(!showEmailContent)}
+          >
+            {showEmailContent ? (
+              <>
+                <EyeOff className="h-4 w-4 mr-1" />
+                <span className="sm:inline hidden">Skjul e-post</span>
+              </>
+            ) : (
+              <>
+                <Eye className="h-4 w-4 mr-1" />
+                <span className="sm:inline hidden">Vis e-post</span>
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+    </header>
+  );
+
   return (
-    <>
-      {emailContentDisplay}
-      <Chat
-        messages={messages}
-        onSubmit={handleSubmit}
-        input={input}
-        setInput={setInput}
-        isLoading={isLoading}
-        error={error}
-        headerComponent={<HeaderComponent />}
-        assistantName="AI Email Assistant"
-        placeholder="Spør om e-posten..."
-        userId={userId}
-        emailId={
-          emailId || storedEmail?.id
-            ? String(emailId || storedEmail?.id)
-            : undefined
-        }
-        threadId={threadId ? String(threadId) : undefined}
-        onSendReply={handleSendReply}
-      />
-    </>
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Position the email content relative to our container */}
+      <div className="relative flex-1 overflow-hidden">
+        {emailContentDisplay}
+
+        {/* Chat component */}
+        <Chat
+          messages={messages}
+          onSubmit={handleSubmit}
+          input={input}
+          setInput={setInput}
+          isLoading={isLoading}
+          error={error}
+          headerComponent={<HeaderComponent />}
+          placeholder="Spør om e-posten..."
+          userId={userId}
+          emailId={
+            emailId || storedEmail?.id
+              ? String(emailId || storedEmail?.id)
+              : undefined
+          }
+          threadId={threadId ? String(threadId) : undefined}
+          onSendReply={handleSendReply}
+        />
+      </div>
+    </div>
   );
 }
