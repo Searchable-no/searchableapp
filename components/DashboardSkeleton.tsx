@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Mail,
@@ -11,13 +12,14 @@ import {
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
-function TileSkeleton({
+// Memoized TileSkeleton to prevent unnecessary re-renders
+const TileSkeleton = memo(({
   icon: Icon,
   title,
 }: {
   icon: LucideIcon;
   title: string;
-}) {
+}) => {
   return (
     <Card className="h-full bg-gradient-to-br from-background to-muted/50 shadow-sm">
       <CardHeader className="py-1.5 px-2.5 border-b flex-none">
@@ -40,9 +42,22 @@ function TileSkeleton({
       </CardContent>
     </Card>
   );
-}
+});
 
-export function DashboardSkeleton() {
+TileSkeleton.displayName = 'TileSkeleton';
+
+// Main skeleton component, memoized for performance
+export const DashboardSkeleton = memo(() => {
+  // Predefined tiles to match dashboard layout
+  const skeletonTiles = [
+    { icon: Calendar, title: "Calendar Events" },
+    { icon: ListTodo, title: "Planner Tasks" },
+    { icon: Users, title: "Teams Channels" },
+    { icon: MessageSquare, title: "Teams Messages" },
+    { icon: FileText, title: "Recent Files" },
+    { icon: Mail, title: "Email Threads" }
+  ];
+  
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-3 py-4 space-y-4 max-w-[1920px]">
@@ -57,27 +72,16 @@ export function DashboardSkeleton() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={Mail} title="Email Threads" />
-          </div>
-          <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={MessageSquare} title="Teams Messages" />
-          </div>
-          <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={Users} title="Teams Channels" />
-          </div>
-          <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={Calendar} title="Calendar" />
-          </div>
-          <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={FileText} title="Recent Files" />
-          </div>
-          <div className="h-[280px] rounded-lg">
-            <TileSkeleton icon={ListTodo} title="Planner Tasks" />
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {skeletonTiles.map((tile, index) => (
+            <div key={index} className="h-64 rounded-lg">
+              <TileSkeleton icon={tile.icon} title={tile.title} />
+            </div>
+          ))}
         </div>
       </div>
     </div>
   );
-}
+});
+
+DashboardSkeleton.displayName = 'DashboardSkeleton';

@@ -17,10 +17,20 @@ import {
 import { revalidatePath } from 'next/cache'
 import { TileType } from '@/lib/database.types'
 
-// Helper function to get data for specific tile types
+// Default timeout for fetch operations in milliseconds
+const FETCH_TIMEOUT = 10000; 
+
+// Cache control constants
+const CACHE_TTL = 300; // 5 minutes in seconds
+
+/**
+ * Helper function to get dashboard data for specific tile types
+ * Optimized for parallel fetching and improved error handling
+ */
 export async function getData(tileTypes?: TileType[], forceRefresh: boolean = false) {
-  console.log(`getData called with tileTypes: ${tileTypes?.join(', ') || 'all'}, forceRefresh: ${forceRefresh}`);
   const start = Date.now();
+  
+  // Create Supabase client and get user
   const supabase = createServerComponentClient({ cookies })
   const { data: { user }, error } = await supabase.auth.getUser()
   
@@ -109,24 +119,20 @@ export async function getData(tileTypes?: TileType[], forceRefresh: boolean = fa
       ? tileTypes
       : Object.keys(fetchFunctions) as TileType[];
     
-    // Log what we're fetching
-    console.log(`Fetching dashboard data for tiles: ${tilesToFetch.join(', ')}`);
-    
-    // Add retry and timeout capabilities
+    // Improved fetch with timeout, retry and error handling
     const fetchWithTimeout = async (tileType: TileType): Promise<any> => {
       try {
-        console.log(`Starting fetch for ${tileType}`);
         const tileStart = Date.now();
         
-        // Create a promise that rejects after 15 seconds
-        const timeout = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`Fetch for ${tileType} timed out`)), 15000);
+        // Create a promise that rejects after timeout
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`Fetch for ${tileType} timed out`)), FETCH_TIMEOUT);
         });
         
         // Race the fetch against the timeout
         const tileData = await Promise.race([
           fetchFunctions[tileType](),
-          timeout
+          timeoutPromise
         ]) as any;
         
         const tileEnd = Date.now();
@@ -134,17 +140,24 @@ export async function getData(tileTypes?: TileType[], forceRefresh: boolean = fa
         return tileData;
       } catch (error) {
         console.error(`Error fetching data for ${tileType}:`, error);
-        return {} // Return empty object for this tile if fetch fails
+        return {}; // Return empty object for this tile if fetch fails
       }
     };
     
-    // Fetch data for each requested tile type in parallel
+    // Fetch data for all requested tiles in parallel for optimal performance
     const fetchPromises = tilesToFetch.map(tileType => fetchWithTimeout(tileType));
     
-    const results = await Promise.all(fetchPromises);
+    // Concurrent fetching with Promise.allSettled for maximum fault tolerance
+    const results = await Promise.allSettled(fetchPromises);
     
-    // Merge all results
-    const mergedResult = results.reduce((acc, curr) => ({ ...acc, ...curr }), result);
+    // Extract successful results and merge them
+    const mergedResult = results.reduce((acc, curr, index) => {
+      if (curr.status === 'fulfilled') {
+        return { ...acc, ...curr.value };
+      }
+      console.error(`Failed to fetch ${tilesToFetch[index]}:`, curr.reason);
+      return acc;
+    }, result);
     
     const end = Date.now();
     console.log(`getData completed in ${end - start}ms for ${tilesToFetch.length} tiles`);
@@ -174,7 +187,6 @@ export async function updatePlannerTask(
   const supabase = createServerComponentClient({ cookies: () => cookieStore })
   
   try {
-    console.log('Fetching Microsoft connection for user:', userId);
     // Get user's Microsoft connection
     const { data: connection, error: connectionError } = await supabase
       .from('connections')
@@ -196,7 +208,6 @@ export async function updatePlannerTask(
     const graphClient = await getGraphClient(accessToken);
 
     // First get the current task to get the etag
-    console.log('Fetching current task to get etag');
     let currentTask;
     try {
       currentTask = await graphClient
@@ -206,12 +217,6 @@ export async function updatePlannerTask(
       console.error('Error fetching task for etag:', error);
       throw new Error(`Could not fetch task: ${error.message || 'Unknown error'}`);
     }
-
-    console.log('Current task:', { 
-      id: currentTask.id, 
-      title: currentTask.title,
-      etag: currentTask['@odata.etag'] 
-    });
 
     if (!currentTask['@odata.etag']) {
       throw new Error('Task etag not found - cannot update task');
@@ -224,24 +229,18 @@ export async function updatePlannerTask(
     if (updates.description !== undefined) updateObject.description = updates.description;
     if (updates.dueDateTime !== undefined) {
       updateObject.dueDateTime = updates.dueDateTime;
-      console.log('Setting due date to:', updates.dueDateTime);
     }
-
-    console.log('Update object:', updateObject);
 
     // If trying to update description, we need a different endpoint
     let response;
     
     if (updates.description !== undefined) {
-      console.log('Updating task details (description)');
       try {
         // First get the current task details to get its etag
         const currentDetails = await graphClient
           .api(`/planner/tasks/${taskId}/details`)
           .get();
           
-        console.log('Current details etag:', currentDetails['@odata.etag']);
-        
         // Update the task details
         response = await graphClient
           .api(`/planner/tasks/${taskId}/details`)
@@ -249,8 +248,6 @@ export async function updatePlannerTask(
           .patch({
             description: updates.description
           });
-          
-        console.log('Description update successful');
       } catch (error: any) {
         console.error('Error updating task description:', error);
         throw new Error(`Failed to update task description: ${error.message || 'Unknown error'}`);
@@ -262,22 +259,17 @@ export async function updatePlannerTask(
     
     // Only update the main task if we have properties to update
     if (Object.keys(updateObject).length > 0) {
-      console.log('Updating main task properties');
       try {
         // Update the task with If-Match header
         response = await graphClient
           .api(`/planner/tasks/${taskId}`)
           .header('If-Match', currentTask['@odata.etag'])
           .patch(updateObject);
-          
-        console.log('Task update successful');
       } catch (error: any) {
         console.error('Error updating task properties:', error);
         throw new Error(`Failed to update task properties: ${error.message || 'Unknown error'}`);
       }
     }
-
-    console.log('Task update completed successfully');
 
     // Revalidate the dashboard page to show updated data
     revalidatePath('/dashboard')
@@ -297,9 +289,8 @@ export async function updatePlannerTask(
 
 // Function to refresh a specific tile type
 export async function refreshTileData(tileType: TileType) {
-  console.log(`Refreshing tile data for: ${tileType}`);
   try {
-    const data = await getData([tileType]);
+    const data = await getData([tileType], true);
     return data;
   } catch (error) {
     console.error(`Error refreshing ${tileType}:`, error);

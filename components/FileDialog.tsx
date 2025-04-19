@@ -15,10 +15,15 @@ import {
   Download,
   ExternalLink,
   FileIcon,
+  Check,
+  Copy,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
-import React from "react";
+import React, { useState } from "react";
+import { SharePointSearchResult } from "./SearchResults";
+import { convertToSearchResult } from "./RecentFilesTile";
 
 // Add interface for parent reference
 interface ParentReference {
@@ -26,10 +31,198 @@ interface ParentReference {
 }
 
 // Extend RecentFile interface
-interface FileDialogProps {
+export interface FileDialogProps {
   file: RecentFile & { parentReference?: ParentReference };
   isOpen: boolean;
   onClose: () => void;
+  previewUrl?: string | null;
+}
+
+// Separate dialog component for FileDialog with search view styling
+export function FileSearchDialog({
+  file,
+  isOpen,
+  onClose,
+  previewUrl
+}: {
+  file: SharePointSearchResult;
+  isOpen: boolean;
+  onClose: () => void;
+  previewUrl: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
+  
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      },
+      (err) => {
+        console.error("Could not copy text: ", err);
+      }
+    );
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-[95vw] w-full h-[98vh] flex flex-col p-0 gap-0 overflow-hidden">
+        {/* Header */}
+        <DialogHeader className="px-6 py-3 border-b flex flex-row items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <FileIcon className="h-5 w-5 text-blue-500" />
+            <DialogTitle className="text-xl">
+              {file?.name}
+            </DialogTitle>
+          </div>
+        </DialogHeader>
+
+        {/* Main content area */}
+        <div className="flex flex-1 min-h-0 h-full">
+          {/* Preview pane */}
+          <div className="flex-1 h-full">
+            {previewUrl ? (
+              <iframe
+                src={previewUrl}
+                className="w-full h-full border-0"
+                title="File preview"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            )}
+          </div>
+
+          {/* Details sidebar */}
+          <div className="w-80 border-l bg-muted/10 p-6 overflow-y-auto h-full">
+            <div className="space-y-6">
+              <div>
+                <h3 className="font-semibold mb-3">File Details</h3>
+                <dl className="space-y-2 text-sm">
+                  <div>
+                    <dt className="text-muted-foreground">Type</dt>
+                    <dd className="font-medium">
+                      {file?.type?.toUpperCase()}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Size</dt>
+                    <dd className="font-medium">
+                      {formatFileSize(file?.size)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Created By</dt>
+                    <dd className="font-medium">
+                      {file?.createdBy?.user?.displayName || "System"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Modified By</dt>
+                    <dd className="font-medium">
+                      {file?.lastModifiedBy?.user?.displayName ||
+                        "System"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Source</dt>
+                    <dd className="font-medium">
+                      {file?.source || "OneDrive"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Path</dt>
+                    <dd className="font-medium break-all">
+                      {file?.path || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">URL</dt>
+                    <dd className="font-medium break-all flex items-start gap-2">
+                      {file?.webUrl ? (
+                        <>
+                          <a 
+                            href={file.webUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline cursor-pointer flex-grow"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              window.open(file.webUrl, "_blank");
+                            }}
+                          >
+                            {file.webUrl}
+                          </a>
+                          <button
+                            className={`flex-shrink-0 p-1 rounded-md hover:bg-muted transition-colors ${copied ? 'text-green-500' : 'text-muted-foreground'}`}
+                            onClick={() => file?.webUrl && copyToClipboard(file.webUrl)}
+                            title="Copy URL to clipboard"
+                          >
+                            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </button>
+                        </>
+                      ) : "—"}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="font-semibold mb-2">Actions</h3>
+
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    if (file?.webUrl) {
+                      window.open(file.webUrl, "_blank");
+                    }
+                  }}
+                >
+                  Open in Browser
+                </Button>
+
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => {
+                    if (file?.webUrl) {
+                      // Dette kan åpne filen i klientprogrammet via Office-protokoller
+                      // F.eks. ms-word:ofv|u|https://...
+                      const url = file.webUrl;
+                      let protocol = "ms-office:ofe|u|";
+
+                      // Bestem protokoll basert på filtype
+                      if (
+                        file.name.endsWith(".docx") ||
+                        file.name.endsWith(".doc")
+                      ) {
+                        protocol = "ms-word:ofe|u|";
+                      } else if (
+                        file.name.endsWith(".xlsx") ||
+                        file.name.endsWith(".xls")
+                      ) {
+                        protocol = "ms-excel:ofe|u|";
+                      } else if (
+                        file.name.endsWith(".pptx") ||
+                        file.name.endsWith(".ppt")
+                      ) {
+                        protocol = "ms-powerpoint:ofe|u|";
+                      }
+
+                      window.location.href = protocol + url;
+                    }
+                  }}
+                >
+                  Open in Client Application
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -55,113 +248,122 @@ function getFileExtension(filename: string | undefined): string {
   return parts.length > 1 ? parts.pop()?.toUpperCase() || "FILE" : "FILE";
 }
 
-function getPreviewUrl(file: RecentFile): string | null {
-  const ext = getFileExtension(file.name).toLowerCase();
-  console.log("Processing file:", {
-    name: file.name,
-    id: file.id,
-    webUrl: file.webUrl,
-    parentReference: file.parentReference,
-  });
-
-  // For supported file types, use the preview API
-  if (
-    [
-      // Office documents
-      "docx",
-      "xlsx",
-      "pptx",
-      "doc",
-      "xls",
-      "ppt",
-      // PDFs and images
-      "pdf",
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "bmp",
-      // Text files
-      "txt",
-      "csv",
-      "md",
-      "json",
-      "xml",
-      "html",
-      "css",
-      "js",
-    ].includes(ext)
-  ) {
-    // Extract driveId and fileId from the file object
-    let driveId, fileId;
-
-    if (file.webUrl?.includes("sourcedoc=")) {
-      // For SharePoint files, extract the document ID from the URL
-      const url = new URL(file.webUrl);
-      const sourcedoc = url.searchParams.get("sourcedoc") || "";
-      // Remove curly braces and convert to base64
-      const docId = sourcedoc.replace(/[{}]/g, "");
-      driveId = `b!${Buffer.from(docId).toString("base64").replace(/=/g, "")}`;
-      fileId = file.id;
-      console.log("SharePoint file detected:", { docId, driveId, fileId });
-    } else if (file.id.includes("!")) {
-      [driveId, fileId] = file.id.split("!");
-      console.log("OneDrive file detected:", { driveId, fileId });
-    } else if (file.id.includes(",")) {
-      [driveId, fileId] = file.id.split(",");
-      console.log("SharePoint list file detected:", { driveId, fileId });
-    } else if (file.parentReference?.driveId) {
-      driveId = file.parentReference.driveId;
-      fileId = file.id;
-      console.log("Using parent reference:", { driveId, fileId });
-    } else if (file.webUrl?.includes("sharepoint.com")) {
-      // For files in the root site's Shared Documents library
-      // Use the drive ID from the file's URL
-      const url = new URL(file.webUrl);
-      const pathParts = url.pathname.split("/");
-      const docLibIndex = pathParts.indexOf("Shared%20Documents");
-      if (docLibIndex !== -1) {
-        driveId = "b!6ouVabiacEOJOIH3ZtBNuQxkdvT6fHlLgWYCa3Nzj0o";
-        fileId = file.id;
-        console.log("SharePoint Shared Documents:", {
-          driveId,
-          fileId,
-          path: url.pathname,
-        });
-      }
-    }
-
-    if (!driveId || !fileId) {
-      console.warn("Missing drive ID or file ID:", {
-        file,
-        driveId,
-        fileId,
-        webUrl: file.webUrl,
-        parentRef: file.parentReference,
-      });
-      return null;
-    }
-
-    return `/api/preview?fileId=${encodeURIComponent(
-      fileId
-    )}&driveId=${encodeURIComponent(driveId)}`;
-  }
-
-  return null;
-}
-
-export function FileDialog({ file, isOpen, onClose }: FileDialogProps) {
+export function FileDialog({ file, isOpen, onClose, previewUrl: existingPreviewUrl }: FileDialogProps) {
   const fileExt = getFileExtension(file.name);
-  const previewApiUrl = getPreviewUrl(file);
   const descriptionId = React.useId();
   const [previewError, setPreviewError] = React.useState(false);
   const [previewLoading, setPreviewLoading] = React.useState(true);
-  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(existingPreviewUrl || null);
   const isOfficeFile = ["docx", "xlsx", "pptx", "doc", "xls", "ppt"].includes(
     fileExt.toLowerCase()
   );
 
+  // Hvis vi allerede har en previewUrl, bruk den
   React.useEffect(() => {
+    if (existingPreviewUrl) {
+      setPreviewUrl(existingPreviewUrl);
+      setPreviewLoading(false);
+      return;
+    }
+
+    // Ellers, hent previewUrl fra API
+    function getPreviewUrl(file: RecentFile): string | null {
+      const ext = getFileExtension(file.name).toLowerCase();
+      console.log("Processing file:", {
+        name: file.name,
+        id: file.id,
+        webUrl: file.webUrl,
+        parentReference: file.parentReference,
+      });
+    
+      // For supported file types, use the preview API
+      if (
+        [
+          // Office documents
+          "docx",
+          "xlsx",
+          "pptx",
+          "doc",
+          "xls",
+          "ppt",
+          // PDFs and images
+          "pdf",
+          "jpg",
+          "jpeg",
+          "png",
+          "gif",
+          "bmp",
+          // Text files
+          "txt",
+          "csv",
+          "md",
+          "json",
+          "xml",
+          "html",
+          "css",
+          "js",
+        ].includes(ext)
+      ) {
+        // Extract driveId and fileId from the file object
+        let driveId, fileId;
+    
+        if (file.webUrl?.includes("sourcedoc=")) {
+          // For SharePoint files, extract the document ID from the URL
+          const url = new URL(file.webUrl);
+          const sourcedoc = url.searchParams.get("sourcedoc") || "";
+          // Remove curly braces and convert to base64
+          const docId = sourcedoc.replace(/[{}]/g, "");
+          driveId = `b!${Buffer.from(docId).toString("base64").replace(/=/g, "")}`;
+          fileId = file.id;
+          console.log("SharePoint file detected:", { docId, driveId, fileId });
+        } else if (file.id.includes("!")) {
+          [driveId, fileId] = file.id.split("!");
+          console.log("OneDrive file detected:", { driveId, fileId });
+        } else if (file.id.includes(",")) {
+          [driveId, fileId] = file.id.split(",");
+          console.log("SharePoint list file detected:", { driveId, fileId });
+        } else if (file.parentReference?.driveId) {
+          driveId = file.parentReference.driveId;
+          fileId = file.id;
+          console.log("Using parent reference:", { driveId, fileId });
+        } else if (file.webUrl?.includes("sharepoint.com")) {
+          // For files in the root site's Shared Documents library
+          // Use the drive ID from the file's URL
+          const url = new URL(file.webUrl);
+          const pathParts = url.pathname.split("/");
+          const docLibIndex = pathParts.indexOf("Shared%20Documents");
+          if (docLibIndex !== -1) {
+            driveId = "b!6ouVabiacEOJOIH3ZtBNuQxkdvT6fHlLgWYCa3Nzj0o";
+            fileId = file.id;
+            console.log("SharePoint Shared Documents:", {
+              driveId,
+              fileId,
+              path: url.pathname,
+            });
+          }
+        }
+    
+        if (!driveId || !fileId) {
+          console.warn("Missing drive ID or file ID:", {
+            file,
+            driveId,
+            fileId,
+            webUrl: file.webUrl,
+            parentRef: file.parentReference,
+          });
+          return null;
+        }
+    
+        return `/api/preview?fileId=${encodeURIComponent(
+          fileId
+        )}&driveId=${encodeURIComponent(driveId)}`;
+      }
+    
+      return null;
+    }
+
+    const previewApiUrl = getPreviewUrl(file);
+    
     if (!previewApiUrl) {
       setPreviewLoading(false);
       return;
@@ -190,7 +392,7 @@ export function FileDialog({ file, isOpen, onClose }: FileDialogProps) {
       .finally(() => {
         setPreviewLoading(false);
       });
-  }, [previewApiUrl]);
+  }, [file, existingPreviewUrl]);
 
   const handleIframeLoad = () => {
     setPreviewLoading(false);
@@ -257,7 +459,7 @@ export function FileDialog({ file, isOpen, onClose }: FileDialogProps) {
 
           {/* File Preview */}
           <div className="flex-1 overflow-auto p-4 bg-muted/30">
-            {previewApiUrl ? (
+            {previewUrl ? (
               <div className="w-full h-full flex items-center justify-center bg-white rounded-lg border relative">
                 {previewUrl && !previewError && (
                   <iframe

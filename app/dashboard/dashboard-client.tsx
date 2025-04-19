@@ -1,23 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { EmailTile } from "@/components/EmailTile";
 import { TeamsMessageTile } from "@/components/TeamsMessageTile";
 import { TeamsChannelTile } from "@/components/TeamsChannelTile";
 import { CalendarTile } from "@/components/CalendarTile";
-import { RecentFilesTile } from "@/components/RecentFilesTile";
+import { RecentFilesTile, convertToSearchResult, handleFilePreview } from "@/components/RecentFilesTile";
 import { DashboardPreferences } from "@/components/DashboardPreferences";
+import { NotificationBell } from "@/components/NotificationBell";
 import { TileType } from "@/lib/database.types";
 import { getData } from "./actions";
 import { useUser } from "@/lib/hooks";
 import { supabase } from "@/lib/supabase-browser";
 import { PlannerTile } from "@/components/PlannerTile";
 import { DashboardSkeleton } from "@/components/DashboardSkeleton";
-import { AlertCircle, Info, RefreshCw, Users, Calendar, Search, FileText, Plus, MoreHorizontal, Clock, Home, GripVertical } from "lucide-react";
+import { AlertCircle, Info, RefreshCw, Users, Calendar, Search, FileText, Plus, MoreHorizontal, Clock, Home, GripVertical, Mail, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
-import { TeamsDialog } from "@/components/TeamsDialog";
+import { TeamsMessageDialog } from "@/components/TeamsMessageDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -27,10 +28,14 @@ import { nb } from "date-fns/locale";
 import { Responsive, WidthProvider } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+import { FileSearchDialog } from "@/components/FileDialog";
+import { EmailDialog } from "@/components/EmailDialog";
+import { EmailMessage } from "@/lib/microsoft-graph";
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
-const tileComponents: Record<TileType, React.ComponentType<any>> = {
+// Component mapping registry
+const tileComponents = {
   email: EmailTile,
   teams_message: TeamsMessageTile,
   teams_channel: TeamsChannelTile,
@@ -39,49 +44,31 @@ const tileComponents: Record<TileType, React.ComponentType<any>> = {
   planner: PlannerTile,
 };
 
-const defaultTiles: TileType[] = [
-  "email",
-  "teams_message",
-  "teams_channel",
-  "calendar",
-  "files",
-  "planner",
-];
+// Default settings
+const defaultTiles = ["email", "teams_message", "teams_channel", "calendar", "files", "planner"];
 const defaultOrder = [0, 1, 2, 3, 4, 5];
-
 const defaultTilePreferences = {
   size: "normal" as const,
   refreshInterval: 300, // 5 minutes
 };
-
-interface DashboardPreferences {
-  enabledTiles: TileType[];
-  tileOrder: number[];
-  tilePreferences: Record<
-    TileType,
-    {
-      size: "compact" | "normal" | "large";
-      refreshInterval: number;
-    }
-  >;
-  theme: "light" | "dark" | "system";
-}
-
-const defaultPreferences: DashboardPreferences = {
+const defaultPreferences = {
   enabledTiles: defaultTiles,
   tileOrder: defaultOrder,
   tilePreferences: Object.fromEntries(
     defaultTiles.map((tile) => [tile, defaultTilePreferences])
   ) as Record<TileType, typeof defaultTilePreferences>,
-  theme: "system",
+  theme: "system" as const,
 };
 
-// Helper to safely access localStorage (avoiding SSR issues)
+// Cache configuration 
+const DASHBOARD_CACHE_KEY = 'dashboard_cache';
+const DEFAULT_CACHE_EXPIRY = 1800; // 30 minutes in seconds
+
+// Helper functions for localStorage to avoid SSR issues
 const getFromLocalStorage = (key: string) => {
   if (typeof window === 'undefined') return null;
   try {
     const item = localStorage.getItem(key);
-    console.log(`Retrieved cache for ${key}:`, item ? 'found' : 'not found');
     return item ? JSON.parse(item) : null;
   } catch (error) {
     console.error(`Error reading ${key} from localStorage:`, error);
@@ -92,35 +79,28 @@ const getFromLocalStorage = (key: string) => {
 const setToLocalStorage = (key: string, value: any) => {
   if (typeof window === 'undefined') return;
   try {
-    const valueToStore = JSON.stringify(value);
-    localStorage.setItem(key, valueToStore);
-    console.log(`Saved ${valueToStore.length} bytes to cache key: ${key}`);
+    localStorage.setItem(key, JSON.stringify(value));
   } catch (error) {
     console.error(`Error saving ${key} to localStorage:`, error);
   }
 };
 
-// Function to check if cache is expired
+// Utility function to check if cache is expired
 const isCacheExpired = (timestamp: string | undefined | null, maxAge: number) => {
-  if (!timestamp) return true; // If no timestamp, consider cache expired
+  if (!timestamp) return true;
   
   try {
     const cacheTime = new Date(timestamp).getTime();
-    if (isNaN(cacheTime)) return true; // Invalid date, consider expired
+    if (isNaN(cacheTime)) return true;
     
     const now = new Date().getTime();
     const ageInSeconds = (now - cacheTime) / 1000;
     return ageInSeconds > maxAge;
   } catch (error) {
     console.error('Error checking cache expiry:', error);
-    return true; // On error, consider expired
+    return true;
   }
 };
-
-// Cache key for dashboard data
-const DASHBOARD_CACHE_KEY = 'dashboard_cache';
-// Default cache expiry time in seconds (30 minutes)
-const DEFAULT_CACHE_EXPIRY = 1800;
 
 // Custom hook to detect navigation events that aren't route changes
 function useIsNavigatingFromDashboard() {
@@ -144,6 +124,26 @@ function useIsNavigatingFromDashboard() {
   return isNavigatingFromDashboard;
 }
 
+// Datakey (string) til TileType mapping
+const dataKeyToTileType: Record<string, TileType> = {
+  'emails': 'email',
+  'teamsMessages': 'teams_message',
+  'channelMessages': 'teams_channel',
+  'events': 'calendar',
+  'files': 'files',
+  'plannerTasks': 'planner'
+};
+
+// TileType til datakey (string) mapping
+const tileTypeToDataKey: Record<TileType, string> = {
+  'email': 'emails',
+  'teams_message': 'teamsMessages',
+  'teams_channel': 'channelMessages',
+  'calendar': 'events',
+  'files': 'files',
+  'planner': 'plannerTasks'
+};
+
 export function DashboardClient() {
   const { user, loading: userLoading } = useUser();
   const [data, setData] = useState<any>({});
@@ -151,8 +151,7 @@ export function DashboardClient() {
   const [isFreshData, setIsFreshData] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
-  const [preferences, setPreferences] =
-    useState<DashboardPreferences>(defaultPreferences);
+  const [preferences, setPreferences] = useState(defaultPreferences);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [cacheLoaded, setCacheLoaded] = useState(false);
   const { setTheme } = useTheme();
@@ -166,271 +165,349 @@ export function DashboardClient() {
   const [layouts, setLayouts] = useState<{ [key: string]: any }>({});
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  
+  // State for file details view
+  const [selectedDashboardFile, setSelectedDashboardFile] = useState<any>(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  
+  // State for email detail view
+  const [selectedEmailThread, setSelectedEmailThread] = useState<any>(null);
+  const [emailDetailOpen, setEmailDetailOpen] = useState(false);
+  const [emailThreadLoading, setEmailThreadLoading] = useState(false);
+  const [threadEmails, setThreadEmails] = useState<any[]>([]);
+  const [hasAttemptedFetch, setHasAttemptedFetch] = useState(false);
+  
+  // Calculate date values for display
+  const today = new Date();
+  const day = useMemo(() => today.getDate(), [today]);
+  const weekday = useMemo(() => today.toLocaleDateString('no-NO', { weekday: 'long' }), [today]);
+  const month = useMemo(() => today.toLocaleDateString('no-NO', { month: 'long' }), [today]);
 
-  // First effect: Check cache immediately on mount, before any user data is loaded
-  useEffect(() => {
-    // Immediately attempt to load from cache
-    const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-    
-    if (cachedData && cachedData.data) {
-      console.log('MOUNT: Found cached dashboard data from:', 
-        new Date(cachedData.timestamp || Date.now()).toLocaleTimeString());
-      
-      // Set data and loading states immediately from cache
-      setData(cachedData.data);
-      setLastRefreshed(new Date(cachedData.timestamp || Date.now()));
-      setIsFreshData(false);
-      
-      // Since we have data, we can show the UI right away
-      setIsLoading(false);
-      
-      if (cachedData.preferences) {
-        console.log('MOUNT: Setting preferences from cache');
-        setPreferences(cachedData.preferences);
-        setPreferencesLoaded(true);
-        
-        // Apply theme from cached preferences
-        if (cachedData.preferences.theme) {
-          setTheme(cachedData.preferences.theme);
-        }
-      }
+  // Event handlers
+  const handleChannelMessageClick = useCallback((message: any) => {
+    // Ensure we have channelIdentity for kanal-meldinger
+    console.log("Channel message clicked:", message);
+    if (message.teamName && message.channelName) {
+      // Dette er en kanal-melding (channel message)
+      setSelectedChannelMessage({
+        ...message,
+        channelIdentity: {
+          teamId: message.teamId,
+          channelId: message.channelId,
+        },
+        teamDisplayName: message.teamName,
+        channelDisplayName: message.channelName
+      });
+      setChannelPreviewOpen(true);
     } else {
-      console.log('MOUNT: No cached data found');
+      toast.error("Kan ikke åpne meldingen - mangler kanal-informasjon");
     }
-    
-    setCacheLoaded(true);
-  }, []); // This effect only runs once on mount
+  }, []);
 
-  // Second effect: User data-dependent operations
-  useEffect(() => {
-    if (userLoading) {
-      console.log('AUTH: User still loading, waiting...');
-      return;
-    }
+  const handleTeamsMessageClick = useCallback((message: any) => {
+    // For Teams chat messages, it doesn't need channelIdentity
+    console.log("Teams chat message clicked:", message);
+    setSelectedTeamsMessage({
+      ...message,
+      channelIdentity: null, // Eksplisitt vise at dette ikke er en kanal-melding
+    });
+    setTeamsMessagePreviewOpen(true);
+  }, []);
+  
+  // Handler for file selection
+  const handleDashboardFileSelect = useCallback(async (file: any) => {
+    setSelectedDashboardFile(convertToSearchResult(file));
     
-    if (!user?.id) {
-      console.log('AUTH: No user logged in');
-      return;
-    }
-    
-    console.log('AUTH: User authenticated, ID:', user.id);
-    
-    // If we don't have preferences yet, load them
-    if (!preferencesLoaded) {
-      console.log('PREFS: Loading preferences from DB');
-      loadPreferences();
-    }
-    
-    // Check if we have cache data
-    if (Object.keys(data).length === 0) {
-      console.log('DATA: No data in state, fetching fresh data');
-      fetchData(false);
-      return;
-    }
-    
-    // If we're navigating away from dashboard, don't do background refreshes
-    if (isNavigatingFromDashboard) {
-      console.log('NAVIGATION: User is leaving dashboard, skipping refresh');
-      return;
-    }
-    
-    // We have some data - determine if we need a background refresh
-    const now = new Date();
-    const cacheTimestamp = lastRefreshed || now;
-    const cacheAge = (now.getTime() - cacheTimestamp.getTime()) / 1000; // in seconds
-    
-    console.log(`CACHE: Cache age is ${cacheAge.toFixed(0)} seconds`);
-    
-    if (isCacheExpired(cacheTimestamp.toISOString(), DEFAULT_CACHE_EXPIRY)) {
-      console.log('CACHE: Cache is expired, refreshing in background');
-      fetchData(true);
-    } else {
-      console.log('CACHE: Cache is fresh, no refresh needed');
-    }
-    
-  }, [user, userLoading, cacheLoaded, isNavigatingFromDashboard]); // Add isNavigatingFromDashboard to dependencies
-
-  useEffect(() => {
-    // Apply theme whenever it changes
-    setTheme(preferences.theme);
-  }, [preferences.theme, setTheme]);
-
-  const loadPreferences = async () => {
-    if (!user?.id) return;
-
     try {
-      const { data: allPrefs, error: fetchError } = await supabase
-        .from("dashboard_preferences")
-        .select("enabled_tiles,tile_order,updated_at,tile_preferences,theme")
-        .eq("user_id", user.id)
-        .order("updated_at", { ascending: false })
-        .limit(1);
+      const previewUrl = await handleFilePreview(file);
+      setFilePreviewUrl(previewUrl || file.webUrl || null);
+    } catch (error) {
+      console.error("Error previewing file:", error);
+    }
+  }, []);
 
-      if (fetchError) {
-        console.error("Error loading preferences:", fetchError);
-        return;
+  // Function to fetch complete email thread - memoized to avoid recreating between renders
+  const fetchEmailThread = useCallback(async (conversationId: string) => {
+    if (!conversationId || !user?.id) {
+      console.log("Cannot fetch thread: Missing conversationId or user ID");
+      setEmailThreadLoading(false);
+      return [];
+    }
+    
+    // Prevent duplicate API calls for same conversation
+    const cacheKey = `email_thread_${conversationId}`;
+    const cachedThread = getFromLocalStorage(cacheKey);
+    if (cachedThread && cachedThread.timestamp) {
+      // Use cached thread if it's less than 5 minutes old
+      if (!isCacheExpired(cachedThread.timestamp, 300)) {
+        console.log(`Using cached thread for ${conversationId}`);
+        
+        // Ensure all emails have body content
+        const emailsWithBody = cachedThread.emails.map((email: EmailMessage) => {
+          if (!email.body?.content && email.bodyPreview) {
+            return {
+              ...email,
+              body: {
+                content: `<div>${email.bodyPreview}</div>`,
+                contentType: 'html'
+              }
+            };
+          }
+          return email;
+        });
+        
+        return emailsWithBody;
+      }
+    }
+    
+    console.log(`Fetching email thread for conversation: ${conversationId}`);
+    setEmailThreadLoading(true);
+    
+    try {
+      // Legg til logging av API-kall
+      console.log(`API call: /api/emails/thread?conversationId=${conversationId}`);
+      
+      const response = await fetch(
+        `/api/emails/thread?conversationId=${conversationId}`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Thread API error response:", response.status, errorData);
+        throw new Error(
+          errorData.error || `Failed to fetch thread: ${response.status}`
+        );
       }
 
-      if (allPrefs && allPrefs.length > 0) {
-        const userPrefs = allPrefs[0];
-        console.log("Loaded preferences:", userPrefs);
-
-        // Convert from DB format to our format
-        const loadedPrefs: DashboardPreferences = {
-          enabledTiles: userPrefs.enabled_tiles || defaultPreferences.enabledTiles,
-          tileOrder: userPrefs.tile_order || defaultPreferences.tileOrder,
-          tilePreferences: userPrefs.tile_preferences || defaultPreferences.tilePreferences,
-          theme: userPrefs.theme || defaultPreferences.theme,
+      const data = await response.json();
+      console.log("Thread API response:", data);
+      
+      if (data.emails && Array.isArray(data.emails) && data.emails.length > 0) {
+        // Legg til logging av e-post-innhold
+        console.log(`Thread has ${data.emails.length} emails. First email body:`, 
+          data.emails[0].body ? `${data.emails[0].body.content.substring(0, 100)}...` : "No body");
+        
+        // Ensure all emails have body content
+        const emailsWithBody = data.emails.map((email: EmailMessage) => {
+          if (!email.body?.content && email.bodyPreview) {
+            return {
+              ...email,
+              body: {
+                content: `<div>${email.bodyPreview}</div>`,
+                contentType: 'html'
+              }
+            };
+          }
+          return email;
+        });
+        
+        // Cache the thread result
+        setToLocalStorage(cacheKey, {
+          emails: emailsWithBody,
+          timestamp: new Date().toISOString()
+        });
+        
+        return emailsWithBody;
+      } else {
+        console.warn("API returned empty emails array or invalid format");
+      }
+      
+      // Fallback to initial email with synthetic body if needed
+      if (selectedEmailThread?.latestEmail) {
+        const fallbackEmail = {
+          ...selectedEmailThread.latestEmail,
+          body: selectedEmailThread.latestEmail.body || {
+            content: `<div>${selectedEmailThread.latestEmail.bodyPreview || "Ingen innhold tilgjengelig"}</div>`,
+            contentType: 'html'
+          }
         };
+        return [fallbackEmail];
+      }
+      
+      return [];
+    } catch (error) {
+      console.error("Error fetching email thread:", error);
+      
+      // Fallback to initial email with synthetic body
+      if (selectedEmailThread?.latestEmail) {
+        const fallbackEmail = {
+          ...selectedEmailThread.latestEmail,
+          body: selectedEmailThread.latestEmail.body || {
+            content: `<div>${selectedEmailThread.latestEmail.bodyPreview || "Ingen innhold tilgjengelig"}</div>`,
+            contentType: 'html'
+          }
+        };
+        return [fallbackEmail];
+      }
+      
+      return [];
+    } finally {
+      setEmailThreadLoading(false);
+    }
+  }, [user?.id, selectedEmailThread]);
 
-        // Ensure all required tiles exist in preferences
-        for (const tile of defaultTiles) {
-          if (!loadedPrefs.tilePreferences[tile]) {
-            loadedPrefs.tilePreferences[tile] = defaultTilePreferences;
+  // Effect to fetch thread when dialog opens - with improved error handling
+  useEffect(() => {
+    let isMounted = true;
+    let loadingTimeout: NodeJS.Timeout;
+    
+    // Only attempt to fetch if needed
+    if (emailDetailOpen && 
+        selectedEmailThread?.latestEmail && 
+        !hasAttemptedFetch) {
+      
+      console.log("Dialog opened, fetching email content", { 
+        hasConversationId: !!selectedEmailThread?.latestEmail?.conversationId 
+      });
+      
+      setHasAttemptedFetch(true);
+      setEmailThreadLoading(true);
+      
+      // Set timeout to prevent infinite loading
+      loadingTimeout = setTimeout(() => {
+        if (isMounted && emailThreadLoading) {
+          setEmailThreadLoading(false);
+          console.error("Thread loading timed out");
+          
+          // Use the initial email as fallback with synthetic body
+          if (selectedEmailThread?.latestEmail) {
+            const fallbackEmail = {
+              ...selectedEmailThread.latestEmail,
+              body: selectedEmailThread.latestEmail.body || {
+                content: `<div>${selectedEmailThread.latestEmail.bodyPreview || "Ingen innhold tilgjengelig"}</div>`,
+                contentType: 'html'
+              }
+            };
+            
+            setSelectedEmailThread((prev: any) => ({
+              ...prev,
+              emails: [fallbackEmail]
+            }));
           }
         }
-
-        setPreferences(loadedPrefs);
-
-        // Also update cached preferences
-        const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-        if (cachedData) {
-          setToLocalStorage(DASHBOARD_CACHE_KEY, {
-            ...cachedData,
-            preferences: loadedPrefs,
-          });
+      }, 5000);
+      
+      // Enten bruk conversationId eller fallback til å vise én e-post
+      const fetchData = async () => {
+        try {
+          let emails = [];
+          
+          if (selectedEmailThread.latestEmail.conversationId) {
+            emails = await fetchEmailThread(selectedEmailThread.latestEmail.conversationId);
+          } else {
+            // For enkelt-e-poster uten conversationId, bruk bare denne e-posten
+            const singleEmail = {
+              ...selectedEmailThread.latestEmail,
+              body: selectedEmailThread.latestEmail.body || {
+                content: `<div>${selectedEmailThread.latestEmail.bodyPreview || "Ingen innhold tilgjengelig"}</div>`,
+                contentType: 'html'
+              }
+            };
+            emails = [singleEmail];
+          }
+          
+          if (isMounted && emails.length > 0) {
+            console.log("Setting email thread with", emails.length, "emails");
+            setSelectedEmailThread((prev: any) => ({
+              ...prev,
+              emails: emails
+            }));
+          } else {
+            console.warn("No emails returned or component unmounted");
+          }
+        } catch (error) {
+          console.error("Error in email fetching effect:", error);
+          // Fallback already handled in fetchEmailThread
+        } finally {
+          if (isMounted) {
+            setEmailThreadLoading(false);
+          }
+          if (loadingTimeout) clearTimeout(loadingTimeout);
         }
-
-        // Apply theme if needed
-        if (loadedPrefs.theme) {
-          setTheme(loadedPrefs.theme);
-        }
-      } else {
-        console.log("No preferences found, using defaults");
-      }
-
-      setPreferencesLoaded(true);
-    } catch (error) {
-      console.error("Error in loadPreferences:", error);
+      };
+      
+      fetchData();
     }
-  };
-
-  const fetchData = async (isBackgroundRefresh = false) => {
-    if (!user?.id) return;
     
-    try {
-      // Only set loading if this is not a background refresh
-      if (!isBackgroundRefresh) {
-        setIsLoading(true);
-      } else {
-        setRefreshing(true);
-      }
+    // Reset the fetch attempt flag when the dialog is closed
+    if (!emailDetailOpen) {
+      setHasAttemptedFetch(false);
+    }
+        
+    return () => {
+      isMounted = false;
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+    };
+  }, [emailDetailOpen, selectedEmailThread, fetchEmailThread, hasAttemptedFetch, emailThreadLoading]);
 
-      console.log(`Starting fetch for ${preferences.enabledTiles.join(', ')}`);
+  // Create consistent refresh handler for all tiles
+  const createRefreshHandler = useCallback(async (dataKey: string) => {
+    try {
+      if (refreshing) return;
+      console.log(`Refreshing ${dataKey} data`);
+      setRefreshing(true);
       
-      // Perform the actual data fetch
-      const result = await getData(preferences.enabledTiles, false);
+      const tileType = dataKeyToTileType[dataKey];
+      if (!tileType) {
+        console.error(`Unknown data key: ${dataKey}`);
+        setRefreshing(false);
+        return;
+      }
       
-      // Handle results
-      if (result) {
-        console.log('Fetch completed successfully');
-        setData(result);
+      const result = await getData([tileType], true);
+      if (result && result[dataKey as keyof typeof result]) {
+        // Update just this tile's data
+        setData((prevData: any) => ({
+          ...prevData,
+          [dataKey]: result[dataKey as keyof typeof result]
+        }));
+        
+        // Mark as fresh
         setIsFreshData(true);
         
+        // Update timestamp
         const now = new Date();
         setLastRefreshed(now);
         
-        // Cache the results along with timestamp and preferences
-        setToLocalStorage(DASHBOARD_CACHE_KEY, {
-          data: result,
-          timestamp: now.toISOString(),
-          preferences,
-        });
+        // Update cache
+        const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
+        if (cachedData) {
+          const updatedCache = {
+            ...cachedData,
+            data: {
+              ...cachedData.data,
+              [dataKey]: result[dataKey as keyof typeof result]
+            },
+            timestamp: now.toISOString()
+          };
+          setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
+        }
+        
+        toast.success(`Data refreshed`);
       }
     } catch (err) {
-      console.error("Error fetching dashboard data:", err);
-      toast.error("Failed to refresh dashboard data");
+      console.error(`Error refreshing data:`, err);
+      toast.error(`Failed to refresh data`);
     } finally {
-      setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [refreshing]);
 
-  const handleManualRefresh = () => {
-    if (refreshing) return;
-    
-    console.log('Manual refresh requested');
-    fetchData(true);
-    toast.success("Refreshing dashboard data");
-  };
-
-  const handlePreferencesChange = (newPreferences: DashboardPreferences) => {
-    if (!user?.id) {
-      console.log("Cannot save preferences, no user ID");
-      return;
-    }
-
-    // First update the state
-    setPreferences(newPreferences);
-
-    // Also update the preferences in the cache
-    const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-    if (cachedData) {
-      setToLocalStorage(DASHBOARD_CACHE_KEY, {
-        ...cachedData,
-        preferences: newPreferences,
-      });
-    }
-
-    // Then save to the database
-    savePreferencesToDb(newPreferences);
-
-    // If the theme has changed, update it
-    if (newPreferences.theme !== preferences.theme) {
-      setTheme(newPreferences.theme);
-    }
-  };
-
-  const savePreferencesToDb = async (prefs: DashboardPreferences) => {
-    if (!user?.id) return;
-
-    try {
-      const { error } = await supabase.from("dashboard_preferences").upsert({
-        user_id: user.id,
-        enabled_tiles: prefs.enabledTiles,
-        tile_order: prefs.tileOrder,
-        tile_preferences: prefs.tilePreferences,
-        theme: prefs.theme,
-        updated_at: new Date().toISOString(),
-      });
-
-      if (error) {
-        console.error("Error saving preferences:", error);
-        toast.error("Failed to save dashboard preferences");
-      } else {
-        console.log("Preferences saved successfully");
-      }
-    } catch (err) {
-      console.error("Exception saving preferences:", err);
-      toast.error("Failed to save dashboard preferences");
-    }
-  };
-
-  // Generate data for each tile
-  const getTileData = (tileType: TileType) => {
-    // Common logic for checking if we should show loading state
+  // Get data for each tile - memoized to avoid recalculations
+  const getTileData = useCallback((tileType: TileType) => {
+    // Helper to decide if we should show loading state
     const shouldShowLoading = (dataItems: any[] | undefined) => {
       // If we already have data, don't show loading
       if (dataItems && dataItems.length > 0) return false;
       
-      // If we have cached data but no items, still don't show loading 
-      // since we want to show "No items" instead of loading skeleton
+      // If we have cached data but no items, show empty instead of loading
       if (!isFreshData) return false;
       
       // Otherwise, show loading if we're actively loading
       return isLoading;
     };
 
+    // Tile-specific data mapping
     switch (tileType) {
       case "email":
         return { 
@@ -438,51 +515,7 @@ export function DashboardClient() {
           isLoading: shouldShowLoading(data.emails),
           isCachedData: !isFreshData,
           userId: data.userId,
-          onRefresh: async () => {
-            try {
-              console.log('Refreshing email data');
-              setRefreshing(true);
-              
-              const result = await getData(['email'], true);
-              if (result.emails) {
-                console.log(`Refreshed ${result.emails.length} emails`);
-                
-                // Update just the emails in our data state
-                setData((prevData: any) => ({
-                  ...prevData,
-                  emails: result.emails
-                }));
-                
-                // Mark as fresh data
-                setIsFreshData(true);
-                
-                // Update the timestamp
-                const now = new Date();
-                setLastRefreshed(now);
-                
-                // Update the cache
-                const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-                if (cachedData) {
-                  const updatedCache = {
-                    ...cachedData,
-                    data: {
-                      ...cachedData.data,
-                      emails: result.emails
-                    },
-                    timestamp: now.toISOString()
-                  };
-                  setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                }
-                
-                toast.success('Email data refreshed');
-              }
-            } catch (err) {
-              console.error("Error refreshing email data:", err);
-              toast.error("Failed to refresh email data");
-            } finally {
-              setRefreshing(false);
-            }
-          }
+          onRefresh: () => createRefreshHandler(tileTypeToDataKey[tileType])
         };
       case "teams_message":
         return {
@@ -490,51 +523,7 @@ export function DashboardClient() {
           isLoading: shouldShowLoading(data.teamsMessages),
           userId: data.userId,
           isCachedData: !isFreshData,
-          onRefresh: async () => {
-            try {
-              console.log('Refreshing Teams messages');
-              setRefreshing(true);
-              
-              const result = await getData(['teams_message'], true);
-              if (result.teamsMessages) {
-                console.log(`Refreshed ${result.teamsMessages.length} teams messages`);
-                
-                // Update just the teams messages in our data state
-                setData((prevData: any) => ({
-                  ...prevData,
-                  teamsMessages: result.teamsMessages
-                }));
-                
-                // Mark as fresh data
-                setIsFreshData(true);
-                
-                // Update the timestamp
-                const now = new Date();
-                setLastRefreshed(now);
-                
-                // Update the cache
-                const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-                if (cachedData) {
-                  const updatedCache = {
-                    ...cachedData,
-                    data: {
-                      ...cachedData.data,
-                      teamsMessages: result.teamsMessages
-                    },
-                    timestamp: now.toISOString()
-                  };
-                  setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                }
-                
-                toast.success('Teams messages refreshed');
-              }
-            } catch (err) {
-              console.error("Error refreshing teams messages:", err);
-              toast.error("Failed to refresh teams messages");
-            } finally {
-              setRefreshing(false);
-            }
-          }
+          onRefresh: () => createRefreshHandler(tileTypeToDataKey[tileType])
         };
       case "teams_channel":
         return {
@@ -542,335 +531,40 @@ export function DashboardClient() {
           isLoading: shouldShowLoading(data.channelMessages),
           userId: data.userId,
           isCachedData: !isFreshData,
-          onRefresh: async () => {
-            try {
-              console.log('Refreshing Teams channel messages');
-              setRefreshing(true);
-              
-              const result = await getData(['teams_channel'], true);
-              if (result.channelMessages) {
-                console.log(`Refreshed ${result.channelMessages.length} channel messages`);
-                
-                // Update just the channel messages in our data state
-                setData((prevData: any) => ({
-                  ...prevData,
-                  channelMessages: result.channelMessages
-                }));
-                
-                // Mark as fresh data
-                setIsFreshData(true);
-                
-                // Update the timestamp
-                const now = new Date();
-                setLastRefreshed(now);
-                
-                // Update the cache
-                const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-                if (cachedData) {
-                  const updatedCache = {
-                    ...cachedData,
-                    data: {
-                      ...cachedData.data,
-                      channelMessages: result.channelMessages
-                    },
-                    timestamp: now.toISOString()
-                  };
-                  setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                }
-                
-                toast.success('Channel messages refreshed');
-              }
-            } catch (err) {
-              console.error("Error refreshing channel messages:", err);
-              toast.error("Failed to refresh channel messages");
-            } finally {
-              setRefreshing(false);
-            }
-          }
+          onRefresh: () => createRefreshHandler(tileTypeToDataKey[tileType])
         };
       case "calendar":
         return { 
           events: data.events || [], 
-          isLoading: !Array.isArray(data.events) || (isLoading && (!data.events || data.events.length === 0) && !isFreshData),
+          isLoading: shouldShowLoading(data.events),
           isCachedData: !isFreshData,
           userId: data.userId,
-          onRefresh: async () => {
-            try {
-              console.log('Refreshing calendar events');
-              setRefreshing(true);
-              
-              const result = await getData(['calendar'], true);
-              if (result.events) {
-                console.log(`Refreshed ${result.events.length} calendar events`);
-                
-                // Update just the events in our data state
-                setData((prevData: any) => ({
-                  ...prevData,
-                  events: result.events
-                }));
-                
-                // Mark as fresh data
-                setIsFreshData(true);
-                
-                // Update the timestamp
-                const now = new Date();
-                setLastRefreshed(now);
-                
-                // Update the cache
-                const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-                if (cachedData) {
-                  const updatedCache = {
-                    ...cachedData,
-                    data: {
-                      ...cachedData.data,
-                      events: result.events
-                    },
-                    timestamp: now.toISOString()
-                  };
-                  setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                }
-                
-                toast.success('Calendar events refreshed');
-              }
-            } catch (err) {
-              console.error("Error refreshing calendar events:", err);
-              toast.error("Failed to refresh calendar events");
-            } finally {
-              setRefreshing(false);
-            }
-          }
+          onRefresh: () => createRefreshHandler(tileTypeToDataKey[tileType])
         };
       case "files":
-        return { 
-          files: data.files || [], 
+        return {
+          files: data.files || [],
           isLoading: shouldShowLoading(data.files),
-          isCachedData: !isFreshData,
           userId: data.userId,
-          onRefresh: async () => {
-            try {
-              console.log('Refreshing files');
-              setRefreshing(true);
-              
-              const result = await getData(['files'], true);
-              if (result.files) {
-                console.log(`Refreshed ${result.files.length} files`);
-                
-                // Update just the files in our data state
-                setData((prevData: any) => ({
-                  ...prevData,
-                  files: result.files
-                }));
-                
-                // Mark as fresh data
-                setIsFreshData(true);
-                
-                // Update the timestamp
-                const now = new Date();
-                setLastRefreshed(now);
-                
-                // Update the cache
-                const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-                if (cachedData) {
-                  const updatedCache = {
-                    ...cachedData,
-                    data: {
-                      ...cachedData.data,
-                      files: result.files
-                    },
-                    timestamp: now.toISOString()
-                  };
-                  setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                }
-                
-                toast.success('Files refreshed');
-              }
-            } catch (err) {
-              console.error("Error refreshing files:", err);
-              toast.error("Failed to refresh files");
-            } finally {
-              setRefreshing(false);
-            }
-          }
+          isCachedData: !isFreshData,
+          onRefresh: () => createRefreshHandler(tileTypeToDataKey[tileType])
         };
       case "planner":
         return {
           tasks: data.plannerTasks || [],
           isLoading: shouldShowLoading(data.plannerTasks),
           userId: data.userId,
-          refreshInterval:
-            preferences.tilePreferences.planner.refreshInterval * 1000, // Convert to milliseconds
+          refreshInterval: preferences.tilePreferences?.planner?.refreshInterval * 1000,
           isCachedData: !isFreshData,
-          onRefresh: async () => {
-            try {
-              console.log('Refreshing planner tasks via tile refresh');
-              setRefreshing(true);
-              
-              const result = await getData(['planner'], true);
-              if (result.plannerTasks) {
-                console.log(`Refreshed ${result.plannerTasks.length} planner tasks`);
-                
-                // Update just the planner tasks in our data state
-                setData((prevData: any) => ({
-                  ...prevData,
-                  plannerTasks: result.plannerTasks
-                }));
-                
-                // Mark as fresh data
-                setIsFreshData(true);
-                
-                // Update the timestamp
-                const now = new Date();
-                setLastRefreshed(now);
-                
-                // Update the cache
-                const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
-                if (cachedData) {
-                  const updatedCache = {
-                    ...cachedData,
-                    data: {
-                      ...cachedData.data,
-                      plannerTasks: result.plannerTasks
-                    },
-                    timestamp: now.toISOString()
-                  };
-                  setToLocalStorage(DASHBOARD_CACHE_KEY, updatedCache);
-                  console.log('Updated planner tasks in cache');
-                }
-                
-                toast.success('Planner tasks refreshed');
-              }
-            } catch (err) {
-              console.error("Error refreshing planner tasks:", err);
-              toast.error("Failed to refresh planner tasks");
-            } finally {
-              setRefreshing(false);
-            }
-          }
+          onRefresh: () => createRefreshHandler(tileTypeToDataKey[tileType])
         };
       default:
         return {};
     }
-  };
+  }, [data, isLoading, isFreshData, preferences.tilePreferences, createRefreshHandler]);
 
-  const navigateToSearch = () => {
-    router.push('/search/normal');
-  };
-
-  const formatDate = () => {
-    const today = new Date();
-    const options: Intl.DateTimeFormatOptions = { 
-      weekday: 'long', 
-      day: 'numeric', 
-      month: 'long' 
-    };
-    return today.toLocaleDateString('no-NO', options);
-  };
-
-  const handleChannelMessageClick = (message: any) => {
-    setSelectedChannelMessage(message);
-    setChannelPreviewOpen(true);
-  };
-
-  const handleTeamsMessageClick = (message: any) => {
-    setSelectedTeamsMessage(message);
-    setTeamsMessagePreviewOpen(true);
-  };
-
-  const openInTeams = (webUrl: string) => {
-    if (webUrl) {
-      window.open(webUrl, '_blank');
-    } else {
-      toast.error("Link til Teams er ikke tilgjengelig");
-    }
-  };
-  
-  // Helper function to check if two messages are from the same chat
-  const isSameChat = (msg1: any, msg2: any) => {
-    if (!msg1 || !msg2) return false;
-    
-    // Check if it's the exact same URL
-    if (msg1.webUrl === msg2.webUrl) return true;
-    
-    try {
-      // Extract all UUIDs from the URLs
-      const msg1Uuids = msg1.webUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
-      const msg2Uuids = msg2.webUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
-      
-      // Consider a match if they share at least 2 UUIDs (the users involved)
-      let sharedUuids = 0;
-      for (const uuid of msg1Uuids) {
-        if (msg2Uuids.includes(uuid)) {
-          sharedUuids++;
-        }
-      }
-      
-      return sharedUuids >= 2; // They share at least 2 UUIDs (likely the users in the chat)
-    } catch (e) {
-      return false;
-    }
-  };
-
-  // Add a new useEffect to initialize layouts based on preferences
-  useEffect(() => {
-    if (preferences.enabledTiles.length > 0) {
-      // Delete any outdated layouts
-      localStorage.removeItem('dashboard_layouts');
-      localStorage.removeItem('dashboard_layout_version');
-      
-      // Force reset layouts for all users to fix responsiveness issue
-      initializeDefaultLayouts();
-    }
-  }, [preferences.enabledTiles]);
-
-  const initializeDefaultLayouts = () => {
-    // Create a basic layout for different breakpoints
-    const defaultLayouts = {
-      lg: [
-        { i: 'calendar', x: 0, y: 0, w: 4, h: 6 },
-        { i: 'planner', x: 4, y: 0, w: 4, h: 6 },
-        { i: 'teams_channel', x: 8, y: 0, w: 4, h: 7 },
-        { i: 'teams_message', x: 0, y: 6, w: 4, h: 7 },
-        { i: 'files', x: 4, y: 6, w: 4, h: 6 },
-        { i: 'email', x: 8, y: 7, w: 4, h: 7 },
-      ],
-      md: [
-        { i: 'calendar', x: 0, y: 0, w: 6, h: 6 },
-        { i: 'planner', x: 6, y: 0, w: 6, h: 6 },
-        { i: 'teams_channel', x: 0, y: 6, w: 6, h: 7 },
-        { i: 'teams_message', x: 6, y: 6, w: 6, h: 7 },
-        { i: 'files', x: 0, y: 13, w: 6, h: 6 },
-        { i: 'email', x: 6, y: 13, w: 6, h: 7 },
-      ],
-      sm: [
-        { i: 'calendar', x: 0, y: 0, w: 12, h: 6 },
-        { i: 'planner', x: 0, y: 6, w: 12, h: 6 },
-        { i: 'teams_channel', x: 0, y: 12, w: 12, h: 7 },
-        { i: 'teams_message', x: 0, y: 19, w: 12, h: 7 },
-        { i: 'files', x: 0, y: 26, w: 12, h: 6 },
-        { i: 'email', x: 0, y: 32, w: 12, h: 7 },
-      ],
-      xs: [
-        { i: 'calendar', x: 0, y: 0, w: 1, h: 6 },
-        { i: 'planner', x: 0, y: 6, w: 1, h: 6 },
-        { i: 'teams_channel', x: 0, y: 12, w: 1, h: 7 },
-        { i: 'teams_message', x: 0, y: 19, w: 1, h: 7 },
-        { i: 'files', x: 0, y: 26, w: 1, h: 6 },
-        { i: 'email', x: 0, y: 32, w: 1, h: 7 },
-      ]
-    };
-    
-    // Update version to force a refresh for all users
-    localStorage.setItem('dashboard_layout_version', '1.3');
-    setLayouts(defaultLayouts);
-    localStorage.setItem('dashboard_layouts', JSON.stringify(defaultLayouts));
-  };
-
-  const handleLayoutChange = (currentLayout: any, allLayouts: any) => {
-    setLayouts(allLayouts);
-    localStorage.setItem('dashboard_layouts', JSON.stringify(allLayouts));
-  };
-
-  const renderTile = (tileType: TileType) => {
+  // Memoized tile renderer functions to avoid recreating components
+  const renderTile = useCallback((tileType: TileType) => {
     const tileData = getTileData(tileType);
     
     switch (tileType) {
@@ -1135,141 +829,585 @@ export function DashboardClient() {
           </div>
         );
       
-      case 'files':
-        return (
-          <div key="files" className="h-full">
-            <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm p-6 h-full overflow-hidden flex flex-col">
-              <div className="mb-5 flex justify-between">
-                <h2 className="font-medium">Recent files</h2>
-                <div className="drag-handle cursor-move">
-                  <GripVertical className="h-5 w-5 text-muted-foreground" />
-                </div>
-              </div>
-              
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  className="pl-9 bg-muted/30 border border-muted text-sm" 
-                  placeholder="Search your files" 
-                  onClick={() => router.push('/search/normal?contentTypes=file&focus=true')}
-                />
-              </div>
-              
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1">
-                {data.files && data.files.length > 0 ? (
-                  data.files.slice(0, 20).map((file: any, index: number) => (
-                    <div key={index} className="flex items-start gap-3 py-1.5 cursor-pointer group">
-                      <div className="flex-shrink-0 h-8 w-8 bg-emerald-500 text-white rounded flex items-center justify-center text-xs">
-                        <FileText className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium group-hover:text-primary transition-colors truncate">
-                          {file.name || "Unknown file"}
-                        </div>
-                        {file.webUrl && (
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {new URL(file.webUrl).hostname.replace('www.', '')}
-                          </div>
-                        )}
-                        {file.lastModifiedDateTime && (
-                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {new Date(file.lastModifiedDateTime).toLocaleDateString()}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center text-muted-foreground text-sm py-4">
-                    No recent files
-                  </div>
-                )}
-              </div>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="w-full text-xs font-medium h-8 mt-3"
-                onClick={() => router.push('/search/normal?contentTypes=file')}
-              >
-                All files
-              </Button>
-            </div>
-          </div>
-        );
-      
-      case 'email':
-        return (
-          <div key="email" className="h-full">
-            <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm p-6 h-full overflow-hidden flex flex-col">
-              <div className="mb-5 flex justify-between">
-                <h2 className="font-medium">Email messages</h2>
-                <div className="drag-handle cursor-move">
-                  <GripVertical className="h-5 w-5 text-muted-foreground" />
-                </div>
-              </div>
-              
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  className="pl-9 bg-muted/30 border border-muted text-sm" 
-                  placeholder="Search your emails" 
-                  onClick={() => router.push('/search/normal?contentTypes=email&focus=true')}
-                />
-              </div>
-              
-              <div className="space-y-2 overflow-y-auto flex-1 pr-1">
-                {data.emails && data.emails.length > 0 ? (
-                  data.emails.map((email: any, index: number) => (
-                    <div key={index} className="flex items-start gap-3 py-1.5 cursor-pointer group">
-                      <div className="flex-shrink-0 h-8 w-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs">
-                        {email.sender?.emailAddress?.name?.charAt(0) || "E"}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium group-hover:text-primary transition-colors">
-                          {email.sender?.emailAddress?.name || "Unknown Sender"}
-                        </div>
-                        <div className="text-xs font-medium text-muted-foreground mt-0.5">
-                          {email.subject || "No subject"}
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
-                          {email.bodyPreview || "No preview available"}
-                        </div>
-                        {email.receivedDateTime && (
-                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {new Date(email.receivedDateTime).toLocaleDateString()}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center text-muted-foreground text-sm py-4">
-                    No recent emails
-                  </div>
-                )}
-              </div>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="w-full text-xs font-medium h-8 mt-3"
-                onClick={() => router.push('/search/normal?contentTypes=email')}
-              >
-                All emails
-              </Button>
-            </div>
-          </div>
-        );
-        
       default:
         return null;
     }
-  };
+  }, [day, weekday, month, data, router, handleChannelMessageClick, handleTeamsMessageClick]);
 
-  // Display error messages
+  // Memoized renderers for specific tiles
+  const renderEmailTile = useCallback(() => (
+    <div key="email" className="h-full">
+      <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm p-6 h-full overflow-hidden flex flex-col">
+        <div className="mb-5 flex justify-between">
+          <h2 className="font-medium">Email messages</h2>
+          <div className="drag-handle cursor-move">
+            <GripVertical className="h-5 w-5 text-muted-foreground" />
+          </div>
+        </div>
+        
+        <div className="relative mb-4">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input 
+            className="pl-9 bg-muted/30 border border-muted text-sm" 
+            placeholder="Search your emails" 
+            onClick={() => router.push('/search/normal?contentTypes=email&focus=true')}
+          />
+        </div>
+        
+        <div className="space-y-2 overflow-y-auto flex-1 pr-1">
+          {data.emails && data.emails.length > 0 ? (
+            data.emails.map((email: any, index: number) => (
+              <div key={index} className="flex flex-col py-1.5 cursor-pointer group">
+                <div className="flex items-start gap-3"
+                  onClick={() => {
+                    try {
+                      // Tilbakestill fetching-tilstand før vi åpner ny e-post
+                      setHasAttemptedFetch(false);
+                      setEmailThreadLoading(false);
+                      
+                      // Store the email for the detail view
+                      if (email.conversationId) {
+                        console.log(`Opening email with conversationId: ${email.conversationId}`);
+                        setSelectedEmailThread({
+                          id: email.conversationId,
+                          subject: email.subject || "No subject",
+                          latestEmail: email,
+                          emails: [email] // Initialize with current email
+                        });
+                        // Setter dialog open først etter at thread er satt opp
+                        setTimeout(() => {
+                          setEmailDetailOpen(true);
+                        }, 10);
+                      } else {
+                        // If no conversation ID, just show this single email
+                        console.log("Opening single email without conversationId");
+                        setSelectedEmailThread({
+                          id: email.id,
+                          subject: email.subject || "No subject",
+                          latestEmail: email,
+                          emails: [email]
+                        });
+                        setHasAttemptedFetch(true); // Don't try to fetch without a conversation ID
+                        setEmailDetailOpen(true);
+                      }
+                    } catch (err) {
+                      console.error("Failed to open email detail view:", err);
+                      toast.error("Kunne ikke åpne e-post. Prøv igjen.");
+                    }
+                  }}>
+                  <div className="flex-shrink-0 h-8 w-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs">
+                    {email.from?.emailAddress?.name?.charAt(0) || "E"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium group-hover:text-primary transition-colors">
+                      {email.from?.emailAddress?.name || "Unknown Sender"}
+                    </div>
+                    <div className="text-xs font-medium text-muted-foreground mt-0.5">
+                      {email.subject || "No subject"}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                      {email.bodyPreview || "No preview available"}
+                    </div>
+                    {email.receivedDateTime && (
+                      <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {new Date(email.receivedDateTime).toLocaleDateString()}
+                      </div>
+                    )}
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs h-7 px-2"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try {
+                            // Store the email in localStorage for the AI chat
+                            const emailKey = `email_${email.id}`;
+                            localStorage.setItem(emailKey, JSON.stringify(email));
+                            
+                            // Navigate to AI chat page with email ID and subject
+                            window.open(
+                              `/ai-services/email/chat?id=${encodeURIComponent(email.id)}&subject=${encodeURIComponent(email.subject || "Email")}`,
+                              "_blank"
+                            );
+                          } catch (err) {
+                            console.error("Failed to open email in AI chat:", err);
+                          }
+                        }}
+                      >
+                        <Mail className="h-3.5 w-3.5 mr-1" />
+                        AI Chat
+                      </Button>
+                      {email.webLink && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="text-xs h-7 px-2"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(email.webLink, "_blank");
+                          }}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                          Outlook
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center text-muted-foreground text-sm py-4">
+              No recent emails
+            </div>
+          )}
+        </div>
+        
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="w-full text-xs font-medium h-8 mt-3"
+          onClick={() => router.push('/search/normal?contentTypes=email')}
+        >
+          All emails
+        </Button>
+      </div>
+    </div>
+  ), [data.emails, router, setSelectedEmailThread, setEmailDetailOpen, setHasAttemptedFetch, setEmailThreadLoading]);
+
+  const renderFilesTile = useCallback(() => (
+    <div key="files" className="h-full">
+      <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-sm p-6 h-full overflow-hidden flex flex-col">
+        <div className="mb-5 flex justify-between">
+          <h2 className="font-medium">Recent files</h2>
+          <div className="drag-handle cursor-move">
+            <GripVertical className="h-5 w-5 text-muted-foreground" />
+          </div>
+        </div>
+        
+        <div className="relative mb-4">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input 
+            className="pl-9 bg-muted/30 border border-muted text-sm" 
+            placeholder="Search your files" 
+            onClick={() => router.push('/search/normal?contentTypes=file&focus=true')}
+          />
+        </div>
+        
+        <div className="space-y-3 overflow-y-auto flex-1 pr-1">
+          {data.files && data.files.length > 0 ? (
+            data.files.slice(0, 20).map((file: any, index: number) => (
+              <div 
+                key={index} 
+                className="flex items-start gap-3 py-1.5 cursor-pointer group"
+                onClick={() => handleDashboardFileSelect(file)}
+              >
+                <div className="flex-shrink-0 h-8 w-8 bg-emerald-500 text-white rounded flex items-center justify-center text-xs">
+                  <FileText className="h-4 w-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium group-hover:text-primary transition-colors truncate">
+                    {file.name || "Unknown file"}
+                  </div>
+                  {file.webUrl && (
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {new URL(file.webUrl).hostname.replace('www.', '')}
+                    </div>
+                  )}
+                  {file.lastModifiedDateTime && (
+                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {new Date(file.lastModifiedDateTime).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center text-muted-foreground text-sm py-4">
+              No recent files
+            </div>
+          )}
+        </div>
+        
+        <Button 
+          variant="outline" 
+          size="sm" 
+          className="w-full text-xs font-medium h-8 mt-3"
+          onClick={() => router.push('/search/normal?contentTypes=file')}
+        >
+          All files
+        </Button>
+      </div>
+    </div>
+  ), [data.files, router, handleDashboardFileSelect]);
+
+  // Generate grid layout based on preferences - NOW moved AFTER all the required functions
+  const gridItems = useMemo(() => {
+    if (!preferences || !preferences.enabledTiles) return [];
+    
+    return (preferences.enabledTiles as TileType[]).map((tileType: TileType) => {
+      if (tileType === 'email') return renderEmailTile();
+      if (tileType === 'files') return renderFilesTile();
+      return renderTile(tileType);
+    }).filter(Boolean);
+  }, [preferences.enabledTiles, renderTile, renderEmailTile, renderFilesTile]);
+
+  // First effect: Check cache immediately on mount, before any user data is loaded
+  useEffect(() => {
+    // Immediately attempt to load from cache
+    const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
+    
+    if (cachedData && cachedData.data) {
+      const cacheAge = cachedData.timestamp ? 
+        (new Date().getTime() - new Date(cachedData.timestamp).getTime()) / 1000 : 
+        Infinity;
+        
+      console.log(`Found cached dashboard data from ${cacheAge.toFixed(0)}s ago`);
+      
+      // Set data and loading states immediately from cache
+      setData(cachedData.data);
+      setLastRefreshed(cachedData.timestamp ? new Date(cachedData.timestamp) : new Date());
+      setIsFreshData(false);
+      setIsLoading(false);
+      
+      if (cachedData.preferences) {
+        setPreferences(cachedData.preferences);
+        setPreferencesLoaded(true);
+        
+        // Apply theme from cached preferences
+        if (cachedData.preferences.theme) {
+          setTheme(cachedData.preferences.theme);
+        }
+      }
+    } else {
+      console.log('No cached data found');
+    }
+    
+    setCacheLoaded(true);
+  }, []); // This effect only runs once on mount
+
+  // Second effect: User data-dependent operations with debouncing
+  useEffect(() => {
+    if (userLoading) return;
+    if (!user?.id) return;
+    if (!cacheLoaded) return;
+    
+    // If user is navigating away, don't fetch
+    if (isNavigatingFromDashboard) return;
+    
+    // If we don't have preferences yet, load them
+    if (!preferencesLoaded) {
+      console.log('Loading preferences from DB');
+      loadPreferences();
+    }
+    
+    // Determine if we need to fetch data
+    const shouldFetchFreshData = () => {
+      // No data at all - must fetch
+      if (Object.keys(data).length === 0) return true;
+      
+      // Check if cache is expired
+      if (lastRefreshed) {
+        const cacheAge = (new Date().getTime() - lastRefreshed.getTime()) / 1000;
+        return cacheAge > DEFAULT_CACHE_EXPIRY;
+      }
+      
+      return true;
+    };
+    
+    // Fetch if needed, with a small delay to avoid immediate fetch on mount
+    if (shouldFetchFreshData()) {
+      const timer = setTimeout(() => {
+        console.log('Cache needs refresh, fetching data');
+        fetchData(Object.keys(data).length > 0);
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [user, userLoading, cacheLoaded, isNavigatingFromDashboard, preferencesLoaded, data]);
+
+  // Apply theme whenever it changes
+  useEffect(() => {
+    if (preferences.theme) {
+      setTheme(preferences.theme);
+    }
+  }, [preferences.theme, setTheme]);
+
+  const loadPreferences = useCallback(async () => {
+    if (!user?.id) return;
+
+    try {
+      const { data: allPrefs, error: fetchError } = await supabase
+        .from("dashboard_preferences")
+        .select("enabled_tiles,tile_order,updated_at,tile_preferences,theme")
+        .eq("user_id", user.id)
+        .order("updated_at", { ascending: false })
+        .limit(1);
+
+      if (fetchError) {
+        console.error("Error loading preferences:", fetchError);
+        return;
+      }
+
+      if (allPrefs && allPrefs.length > 0) {
+        const userPrefs = allPrefs[0];
+        
+        // Convert from DB format to our format
+        const loadedPrefs = {
+          enabledTiles: userPrefs.enabled_tiles || defaultPreferences.enabledTiles,
+          tileOrder: userPrefs.tile_order || defaultPreferences.tileOrder,
+          tilePreferences: userPrefs.tile_preferences || defaultPreferences.tilePreferences,
+          theme: userPrefs.theme || defaultPreferences.theme,
+        };
+
+        // Ensure all required tiles exist in preferences
+        for (const tile of defaultTiles) {
+          if (!loadedPrefs.tilePreferences[tile]) {
+            loadedPrefs.tilePreferences[tile] = defaultTilePreferences;
+          }
+        }
+
+        setPreferences(loadedPrefs);
+
+        // Also update cached preferences
+        const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
+        if (cachedData) {
+          setToLocalStorage(DASHBOARD_CACHE_KEY, {
+            ...cachedData,
+            preferences: loadedPrefs,
+          });
+        }
+
+        // Apply theme if needed
+        if (loadedPrefs.theme) {
+          setTheme(loadedPrefs.theme);
+        }
+      } else {
+        console.log("No preferences found, using defaults");
+      }
+
+      setPreferencesLoaded(true);
+    } catch (error) {
+      console.error("Error in loadPreferences:", error);
+      setPreferencesLoaded(true); // Still mark as loaded to avoid infinite retries
+    }
+  }, [user?.id, setTheme]);
+
+  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
+    if (!user?.id) return;
+    
+    try {
+      // Only set loading if this is not a background refresh
+      if (!isBackgroundRefresh) {
+        setIsLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+
+      // Limit fetch to enabled tiles only
+      const result = await getData(preferences.enabledTiles as TileType[], false);
+      
+      if (result) {
+        setData(result);
+        setIsFreshData(true);
+        
+        const now = new Date();
+        setLastRefreshed(now);
+        
+        // Cache the results along with timestamp and preferences
+        setToLocalStorage(DASHBOARD_CACHE_KEY, {
+          data: result,
+          timestamp: now.toISOString(),
+          preferences,
+        });
+      }
+    } catch (err) {
+      console.error("Error fetching dashboard data:", err);
+      toast.error("Failed to refresh dashboard data");
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
+  }, [user?.id, preferences]);
+
+  const handleManualRefresh = useCallback(() => {
+    if (refreshing) return;
+    fetchData(true);
+    toast.success("Refreshing dashboard data");
+  }, [refreshing, fetchData]);
+
+  const handlePreferencesChange = useCallback((newPreferences: any) => {
+    if (!user?.id) {
+      console.log("Cannot save preferences, no user ID");
+      return;
+    }
+
+    // Update the state
+    setPreferences(newPreferences);
+
+    // Update the cache
+    const cachedData = getFromLocalStorage(DASHBOARD_CACHE_KEY);
+    if (cachedData) {
+      setToLocalStorage(DASHBOARD_CACHE_KEY, {
+        ...cachedData,
+        preferences: newPreferences,
+      });
+    }
+
+    // Save to database (debounced to avoid excessive updates)
+    savePreferencesToDb(newPreferences);
+
+    // Apply theme change immediately if needed
+    if (newPreferences.theme !== preferences.theme) {
+      setTheme(newPreferences.theme);
+    }
+  }, [user?.id, preferences.theme, setTheme]);
+
+  // Throttled function to avoid excessive database writes
+  const savePreferencesToDb = useCallback(async (prefs: any) => {
+    if (!user?.id) return;
+
+    try {
+      const { error } = await supabase.from("dashboard_preferences").upsert({
+        user_id: user.id,
+        enabled_tiles: prefs.enabledTiles,
+        tile_order: prefs.tileOrder,
+        tile_preferences: prefs.tilePreferences,
+        theme: prefs.theme,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (error) {
+        console.error("Error saving preferences:", error);
+        toast.error("Failed to save dashboard preferences");
+      }
+    } catch (err) {
+      console.error("Exception saving preferences:", err);
+      toast.error("Failed to save dashboard preferences");
+    }
+  }, [user?.id]);
+
+  // Navigation helpers
+  const navigateToSearch = useCallback(() => {
+    router.push('/search/normal');
+  }, [router]);
+
+  const openInTeams = useCallback((webUrl: string) => {
+    if (webUrl) {
+      window.open(webUrl, '_blank');
+    } else {
+      toast.error("Link til Teams er ikke tilgjengelig");
+    }
+  }, []);
+  
+  // Helper to check if two Teams messages are from the same chat
+  const isSameChat = useCallback((msg1: any, msg2: any) => {
+    if (!msg1 || !msg2) return false;
+    
+    // Check if it's the exact same URL
+    if (msg1.webUrl === msg2.webUrl) return true;
+    
+    try {
+      // Extract UUIDs from the URLs for comparison
+      const msg1Uuids = msg1.webUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
+      const msg2Uuids = msg2.webUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
+      
+      // Consider a match if they share at least 2 UUIDs (the users involved)
+      let sharedUuids = 0;
+      for (const uuid of msg1Uuids) {
+        if (msg2Uuids.includes(uuid)) {
+          sharedUuids++;
+        }
+      }
+      
+      return sharedUuids >= 2;
+    } catch (e) {
+      return false;
+    }
+  }, []);
+
+  // Initialize layouts based on preferences
+  useEffect(() => {
+    if (preferences.enabledTiles.length > 0) {
+      // Only initialize layouts if they don't already exist
+      const existingLayouts = getFromLocalStorage('dashboard_layouts');
+      const layoutVersion = getFromLocalStorage('dashboard_layout_version');
+      
+      if (!existingLayouts || layoutVersion !== '1.3') {
+        initializeDefaultLayouts();
+      } else {
+        setLayouts(existingLayouts);
+      }
+    }
+  }, [preferences.enabledTiles]);
+
+  // Initialize default layouts - memoized to avoid recreating
+  const initializeDefaultLayouts = useCallback(() => {
+    // Create a basic layout for different breakpoints
+    const defaultLayouts = {
+      lg: [
+        { i: 'calendar', x: 0, y: 0, w: 4, h: 6 },
+        { i: 'planner', x: 4, y: 0, w: 4, h: 6 },
+        { i: 'teams_channel', x: 8, y: 0, w: 4, h: 7 },
+        { i: 'teams_message', x: 0, y: 6, w: 4, h: 7 },
+        { i: 'files', x: 4, y: 6, w: 4, h: 6 },
+        { i: 'email', x: 8, y: 7, w: 4, h: 7 },
+      ],
+      md: [
+        { i: 'calendar', x: 0, y: 0, w: 6, h: 6 },
+        { i: 'planner', x: 6, y: 0, w: 6, h: 6 },
+        { i: 'teams_channel', x: 0, y: 6, w: 6, h: 7 },
+        { i: 'teams_message', x: 6, y: 6, w: 6, h: 7 },
+        { i: 'files', x: 0, y: 13, w: 6, h: 6 },
+        { i: 'email', x: 6, y: 13, w: 6, h: 7 },
+      ],
+      sm: [
+        { i: 'calendar', x: 0, y: 0, w: 12, h: 6 },
+        { i: 'planner', x: 0, y: 6, w: 12, h: 6 },
+        { i: 'teams_channel', x: 0, y: 12, w: 12, h: 7 },
+        { i: 'teams_message', x: 0, y: 19, w: 12, h: 7 },
+        { i: 'files', x: 0, y: 26, w: 12, h: 6 },
+        { i: 'email', x: 0, y: 32, w: 12, h: 7 },
+      ],
+      xs: [
+        { i: 'calendar', x: 0, y: 0, w: 1, h: 6 },
+        { i: 'planner', x: 0, y: 6, w: 1, h: 6 },
+        { i: 'teams_channel', x: 0, y: 12, w: 1, h: 7 },
+        { i: 'teams_message', x: 0, y: 19, w: 1, h: 7 },
+        { i: 'files', x: 0, y: 26, w: 1, h: 6 },
+        { i: 'email', x: 0, y: 32, w: 1, h: 7 },
+      ]
+    };
+    
+    localStorage.setItem('dashboard_layout_version', '1.3');
+    setLayouts(defaultLayouts);
+    localStorage.setItem('dashboard_layouts', JSON.stringify(defaultLayouts));
+  }, []);
+
+  // Handle layout changes - throttled to reduce performance impact
+  const handleLayoutChange = useCallback((currentLayout: any, allLayouts: any) => {
+    // Use requestAnimationFrame to throttle updates
+    if (!isDragging && !isResizing) {
+      requestAnimationFrame(() => {
+        setLayouts(allLayouts);
+        localStorage.setItem('dashboard_layouts', JSON.stringify(allLayouts));
+      });
+    }
+  }, [isDragging, isResizing]);
+
+  // Reset enabled tiles to default
+  const handleResetTiles = useCallback(() => {
+    setPreferences((prev) => ({
+      ...prev,
+      enabledTiles: defaultPreferences.enabledTiles as TileType[],
+      tileOrder: defaultPreferences.tileOrder
+    }));
+  }, []);
+
+  // Display loading state
   if (userLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -1278,315 +1416,130 @@ export function DashboardClient() {
     );
   }
 
+  // Main render logic for the dashboard
   if (!user) {
-    return <div>Please log in to view your dashboard.</div>;
-  }
-
-  if (isLoading || !data || !preferencesLoaded) {
-    return <DashboardSkeleton />;
-  }
-
-  if (data?.error) {
     return (
-      <div className="container mx-auto p-8">
-        <div className="flex flex-col items-center justify-center space-y-4 text-center">
-          <AlertCircle className="w-12 h-12 text-yellow-500" />
-          <h2 className="text-xl font-semibold">{data.error}</h2>
-          {data.error === "Microsoft account not connected" && (
-            <div className="space-y-2">
-              <p>
-                Please connect your Microsoft account to view your dashboard.
-              </p>
-              <Link
-                href="/settings"
-                className="inline-block px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-              >
-                Go to Settings
-              </Link>
-            </div>
-          )}
-        </div>
+      <div className="h-screen flex flex-col items-center justify-center text-center px-4">
+        <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-muted-foreground mb-4">You need to be logged in to view this page.</p>
+        <Button asChild>
+          <Link href="/auth/signin">Sign In</Link>
+        </Button>
       </div>
     );
   }
 
-  const today = new Date();
-  const day = today.getDate();
-  const month = today.toLocaleString('default', { month: 'long' });
-  const weekday = today.toLocaleString('default', { weekday: 'long' });
+  // Show loading skeleton while initial data loads
+  if (isLoading && Object.keys(data).length === 0) {
+    return <DashboardSkeleton />;
+  }
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] dark:bg-zinc-900">
-      <div className="container mx-auto py-8 px-4 sm:px-6 max-w-screen-xl">
-        {/* Header with refresh button */}
-        <div className="flex justify-between items-center mb-6">
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto px-3 py-4 space-y-4 max-w-[1920px]">
+        <div className="flex flex-col space-y-2 md:space-y-0 md:flex-row md:items-center md:justify-between mb-2">
           <div>
-            <h1 className="text-2xl font-bold">Dashboard</h1>
-            {lastRefreshed && (
-              <p className="text-sm text-muted-foreground">
-                Sist oppdatert: {formatDistanceToNow(lastRefreshed, { addSuffix: true, locale: nb })}
-              </p>
-            )}
+            <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {lastRefreshed && `Last updated ${formatDistanceToNow(lastRefreshed, { locale: nb, addSuffix: true })}`}
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <DashboardPreferences
-              userId={user?.id || ""}
-              onPreferencesChange={handlePreferencesChange}
-              initialPreferences={preferences}
-            />
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="flex items-center gap-1.5"
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 rounded-lg hover:bg-primary/10 transition-colors"
               onClick={handleManualRefresh}
               disabled={refreshing}
             >
-              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
-              <span>Oppdater</span>
+              <RefreshCw
+                className={cn("h-4 w-4", refreshing && "animate-spin")}
+              />
             </Button>
+            <NotificationBell />
+            <DashboardPreferences
+              userId={user.id}
+              onPreferencesChange={handlePreferencesChange}
+              initialPreferences={preferences as any}
+            />
           </div>
         </div>
-        
-        {/* Responsive Grid Layout */}
-        <div className={cn(isDragging ? 'cursor-grabbing' : 'cursor-default')}>
-          <style jsx global>{`
-            .react-resizable-handle {
-              position: absolute;
-              width: 100%;
-              height: 10px;
-              bottom: 0;
-              cursor: row-resize;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-            }
-            .react-resizable-handle::after {
-              content: "";
-              width: 40px;
-              height: 3px;
-              border-radius: 3px;
-              background-color: rgba(100, 100, 100, 0.2);
-              transition: all 0.2s ease;
-            }
-            .react-resizable-handle:hover::after {
-              background-color: rgba(100, 100, 100, 0.4);
-              height: 4px;
-            }
-          `}</style>
-          <ResponsiveGridLayout
-            className="layout"
-            layouts={layouts}
-            breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
-            cols={{ lg: 12, md: 12, sm: 12, xs: 1, xxs: 1 }}
-            rowHeight={70}
-            onLayoutChange={(currentLayout, allLayouts) => handleLayoutChange(currentLayout, allLayouts)}
-            draggableHandle=".drag-handle"
-            onDragStart={() => setIsDragging(true)}
-            onDragStop={() => setIsDragging(false)}
-            onResizeStart={() => setIsResizing(true)}
-            onResizeStop={() => setIsResizing(false)}
-            margin={[24, 24]}
-            containerPadding={[24, 24]}
-            isDraggable={true}
-            isResizable={true}
-            resizeHandles={['s']}
-            useCSSTransforms={true}
-            preventCollision={false}
-            style={{ overflow: 'visible' }}
-          >
-            {preferences.enabledTiles.map(tileType => renderTile(tileType))}
-          </ResponsiveGridLayout>
-        </div>
-        
-        {/* Teams Dialog and other modals */}
-        {!userLoading && (
-          <TeamsDialog
-            isOpen={teamsDialogOpen}
-            onClose={() => setTeamsDialogOpen(false)}
-          />
-        )}
 
-        {/* Channel Preview Dialog */}
-        {selectedChannelMessage && (
-          <div className={`fixed inset-0 bg-black/50 z-50 flex items-center justify-center ${channelPreviewOpen ? 'block' : 'hidden'}`}>
-            <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
-              <div className="p-4 border-b flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium text-lg">
-                    {selectedChannelMessage.teamName || "Team"} • {selectedChannelMessage.channelName || "Channel"}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">Meldinger i denne kanalen</p>
-                </div>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  onClick={() => setChannelPreviewOpen(false)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                </Button>
-              </div>
-              
-              <div className="p-4 overflow-y-auto max-h-[60vh]">
-                <div className="space-y-4">
-                  {/* Current message preview */}
-                  <div className="p-3 bg-primary/5 dark:bg-primary/10 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-shrink-0 h-8 w-8 bg-purple-500 text-white rounded-full flex items-center justify-center text-xs">
-                        {selectedChannelMessage.from?.user?.displayName?.charAt(0) || "T"}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{selectedChannelMessage.from?.user?.displayName || "Team Member"}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(selectedChannelMessage.createdDateTime).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-sm">
-                          {selectedChannelMessage.content?.replace(/<[^>]*>|&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || "No message content"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Other messages in same channel/team */}
-                  {data.channelMessages && data.channelMessages
-                    .filter((msg: any) => 
-                      msg.id !== selectedChannelMessage.id && 
-                      msg.teamName === selectedChannelMessage.teamName && 
-                      msg.channelName === selectedChannelMessage.channelName)
-                    .slice(0, 5)
-                    .map((message: any, index: number) => (
-                      <div key={index} className="p-3 bg-muted/20 dark:bg-muted/10 rounded-lg">
-                        <div className="flex items-start gap-3">
-                          <div className="flex-shrink-0 h-8 w-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs">
-                            {message.from?.user?.displayName?.charAt(0) || "T"}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{message.from?.user?.displayName || "Team Member"}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(message.createdDateTime).toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="mt-1 text-sm">
-                              {message.content?.replace(/<[^>]*>|&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || "No message content"}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  
-                  {data.channelMessages?.filter((msg: any) => 
-                    msg.id !== selectedChannelMessage.id && 
-                    msg.teamName === selectedChannelMessage.teamName && 
-                    msg.channelName === selectedChannelMessage.channelName).length === 0 && (
-                    <div className="text-center text-muted-foreground text-sm py-4">
-                      Ingen flere meldinger i denne kanalen
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              <div className="p-4 border-t">
-                <Button 
-                  className="w-full"
-                  onClick={() => openInTeams(selectedChannelMessage.webUrl)}
-                >
-                  Åpne i Teams
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Teams Chat Message Preview Dialog */}
-        {selectedTeamsMessage && (
-          <div className={`fixed inset-0 bg-black/50 z-50 flex items-center justify-center ${teamsMessagePreviewOpen ? 'block' : 'hidden'}`}>
-            <div className="bg-white dark:bg-zinc-800 rounded-xl shadow-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
-              <div className="p-4 border-b flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium text-lg">
-                    Chat med {selectedTeamsMessage.from?.user?.displayName || "Bruker"}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">Direkte meldinger</p>
-                </div>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  onClick={() => setTeamsMessagePreviewOpen(false)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                </Button>
-              </div>
-              
-              <div className="p-4 overflow-y-auto max-h-[60vh]">
-                <div className="space-y-4">
-                  {/* Current message preview */}
-                  <div className="p-3 bg-primary/5 dark:bg-primary/10 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-shrink-0 h-8 w-8 bg-indigo-500 text-white rounded-full flex items-center justify-center text-xs">
-                        {selectedTeamsMessage.from?.user?.displayName?.charAt(0) || "T"}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{selectedTeamsMessage.from?.user?.displayName || "Bruker"}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(selectedTeamsMessage.createdDateTime).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-sm">
-                          {selectedTeamsMessage.content?.replace(/<[^>]*>|&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || "No message content"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Other messages from the same chat */}
-                  {data.teamsMessages && data.teamsMessages
-                    .filter((msg: any) => msg.id !== selectedTeamsMessage.id && isSameChat(msg, selectedTeamsMessage))
-                    .slice(0, 5)
-                    .map((message: any, index: number) => (
-                      <div key={index} className="p-3 bg-muted/20 dark:bg-muted/10 rounded-lg">
-                        <div className="flex items-start gap-3">
-                          <div className="flex-shrink-0 h-8 w-8 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs">
-                            {message.from?.user?.displayName?.charAt(0) || "T"}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{message.from?.user?.displayName || "Bruker"}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(message.createdDateTime).toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="mt-1 text-sm">
-                              {message.content?.replace(/<[^>]*>|&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || "No message content"}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  
-                  {data.teamsMessages?.filter((msg: any) => 
-                    msg.id !== selectedTeamsMessage.id && isSameChat(msg, selectedTeamsMessage)).length === 0 && (
-                    <div className="text-center text-muted-foreground text-sm py-4">
-                      Ingen flere meldinger i denne chatten
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              <div className="p-4 border-t">
-                <Button 
-                  className="w-full"
-                  onClick={() => openInTeams(selectedTeamsMessage.webUrl)}
-                >
-                  Åpne i Teams
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ResponsiveGridLayout
+          className="layout"
+          layouts={layouts}
+          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+          cols={{ lg: 12, md: 12, sm: 12, xs: 1 }}
+          rowHeight={40}
+          onLayoutChange={handleLayoutChange}
+          onDragStart={() => setIsDragging(true)}
+          onDragStop={() => setIsDragging(false)}
+          onResizeStart={() => setIsResizing(true)}
+          onResizeStop={() => setIsResizing(false)}
+          isDraggable={true}
+          isResizable={true}
+          draggableHandle=".drag-handle"
+          useCSSTransforms={true}
+          compactType="vertical"
+          margin={[12, 12]}
+        >
+          {gridItems}
+        </ResponsiveGridLayout>
       </div>
+
+      {/* Dialogs and modals */}
+      {selectedTeamsMessage && (
+        <TeamsMessageDialog
+          message={selectedTeamsMessage}
+          isOpen={teamsMessagePreviewOpen}
+          onClose={() => {
+            setTeamsMessagePreviewOpen(false);
+            setSelectedTeamsMessage(null);
+          }}
+        />
+      )}
+
+      {selectedChannelMessage && (
+        <TeamsMessageDialog
+          message={selectedChannelMessage}
+          isOpen={channelPreviewOpen}
+          onClose={() => {
+            setChannelPreviewOpen(false);
+            setSelectedChannelMessage(null);
+          }}
+        />
+      )}
+
+      {selectedDashboardFile && (
+        <FileSearchDialog
+          file={selectedDashboardFile}
+          isOpen={filePreviewUrl !== null}
+          onClose={() => {
+            setSelectedDashboardFile(null);
+            setFilePreviewUrl(null);
+          }}
+          previewUrl={filePreviewUrl}
+        />
+      )}
+
+      {selectedEmailThread && (
+        <EmailDialog
+          email={selectedEmailThread.latestEmail}
+          thread={selectedEmailThread.emails || []}
+          isOpen={emailDetailOpen}
+          onClose={() => {
+            setEmailDetailOpen(false);
+            setTimeout(() => {
+              setSelectedEmailThread(null);
+              setHasAttemptedFetch(false);
+              setEmailThreadLoading(false);
+            }, 300);
+          }}
+          isLoading={emailThreadLoading}
+          key={`email-dialog-${selectedEmailThread.id}`}
+        />
+      )}
     </div>
   );
 }

@@ -554,11 +554,43 @@ export function EmailTile({
                           )}{" "}
                           ago
                         </span>
-                        {thread.emails.length > 1 && (
-                          <span className="text-[9px] px-1 py-0.5 bg-muted/30 rounded-sm">
-                            {thread.emails.length}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <button
+                            className="text-[9px] px-1.5 py-0.5 text-primary bg-muted/30 rounded-sm hover:bg-primary/10 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              try {
+                                // Save the thread to localStorage
+                                const threadKey = `thread_${thread.id}`;
+                                localStorage.setItem(
+                                  threadKey,
+                                  JSON.stringify({
+                                    subject: thread.subject,
+                                    emails: thread.emails,
+                                  })
+                                );
+
+                                // Open the AI chat with the thread
+                                window.open(
+                                  `/ai-services/email/chat?threadId=${encodeURIComponent(
+                                    thread.id
+                                  )}&subject=${encodeURIComponent(thread.subject)}`,
+                                  "_blank"
+                                );
+                              } catch (err) {
+                                console.error("Failed to open thread in AI chat:", err);
+                              }
+                            }}
+                          >
+                            AI Chat
+                          </button>
+                          {thread.emails.length > 1 && (
+                            <span className="text-[9px] px-1 py-0.5 bg-muted/30 rounded-sm">
+                              {thread.emails.length}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
