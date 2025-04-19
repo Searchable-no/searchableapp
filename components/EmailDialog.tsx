@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { EmailMessage } from "@/lib/microsoft-graph";
 import {
   Dialog,
@@ -31,80 +31,63 @@ export function EmailDialog({
   const { user } = useUser();
   const [emailThread, setEmailThread] = useState<EmailMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const hasProcessedData = useRef(false);
 
-  // Process thread data only once per dialog open session
   useEffect(() => {
-    if (!isOpen) {
-      hasProcessedData.current = false;
-      return;
-    }
-
-    // Only process thread data once per dialog session
-    if (!hasProcessedData.current) {
-      console.log("EmailDialog: Thread data received:", { 
-        threadLength: thread?.length,
-        hasBody: !!thread?.[0]?.body,
-        firstBodyLength: thread?.[0]?.body?.content?.length || 0,
-        previewLength: thread?.[0]?.bodyPreview?.length || 0 
-      });
-      
-      // If we have emails in the thread, use them, otherwise just use the current email
-      if (thread && thread.length > 0) {
-        // Ensure all emails have body content by creating synthetic content from preview if needed
-        const threadsWithBody = thread.map(email => {
-          if (!email.body?.content && email.bodyPreview) {
-            return {
-              ...email,
-              body: {
-                content: `<div>${email.bodyPreview}</div>`,
-                contentType: 'html'
-              }
-            };
-          }
-          return email;
-        });
-        setEmailThread(threadsWithBody);
-        setError(null);
-      } else {
-        // Ensure the single email has body content
-        const singleEmailWithBody = {
-          ...email,
-          body: email.body || {
-            content: `<div>${email.bodyPreview || "Ingen innhold tilgjengelig"}</div>`,
-            contentType: 'html'
-          }
-        };
-        setEmailThread([singleEmailWithBody]);
-        
-        if (!email.body?.content && !email.bodyPreview) {
-          setError("Kunne ikke hente e-postinnhold. Viser kun tilgjengelig metadata.");
-        } else {
-          setError(null);
+    console.log("EmailDialog: Thread data received:", { 
+      threadLength: thread?.length,
+      hasBody: !!thread?.[0]?.body,
+      firstBodyLength: thread?.[0]?.body?.content?.length || 0,
+      previewLength: thread?.[0]?.bodyPreview?.length || 0 
+    });
+    
+    // If we have emails in the thread, use them, otherwise just use the current email
+    if (thread && thread.length > 0) {
+      // Ensure all emails have body content by creating synthetic content from preview if needed
+      const threadsWithBody = thread.map(email => {
+        if (!email.body?.content && email.bodyPreview) {
+          return {
+            ...email,
+            body: {
+              content: `<div>${email.bodyPreview}</div>`,
+              contentType: 'html'
+            }
+          };
         }
-      }
+        return email;
+      });
+      setEmailThread(threadsWithBody);
+      setError(null);
+    } else {
+      // Ensure the single email has body content
+      const singleEmailWithBody = {
+        ...email,
+        body: email.body || {
+          content: `<div>${email.bodyPreview || "Ingen innhold tilgjengelig"}</div>`,
+          contentType: 'html'
+        }
+      };
+      setEmailThread([singleEmailWithBody]);
       
-      hasProcessedData.current = true;
+      if (!email.body?.content && !email.bodyPreview) {
+        setError("Kunne ikke hente e-postinnhold. Viser kun tilgjengelig metadata.");
+      } else {
+        setError(null);
+      }
     }
-  }, [isOpen, email, thread]);
-
-  // Mark as read effect with proper dependencies
-  useEffect(() => {
-    // Only execute when dialog is opened
-    if (!isOpen || !user?.id || !email?.id || email?.isRead) {
-      return;
-    }
-
+    
+    // Mark as read when opened
     const markRead = async () => {
-      try {
-        await markEmailAsRead(user.id, email.id);
-      } catch (error) {
-        console.error("Error while marking email as read:", error);
+      if (isOpen && !email.isRead && user?.id) {
+        try {
+          await markEmailAsRead(user.id, email.id);
+        } catch (error) {
+          console.error("Error while marking email as read:", error);
+        }
       }
     };
 
     markRead();
-  }, [isOpen, user?.id, email?.id, email?.isRead]);
+  }, [isOpen, email, thread, user?.id]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>

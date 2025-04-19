@@ -49,23 +49,17 @@ export function NotificationBell({
   const [localTeamsMessages, setLocalTeamsMessages] = useState(teamsMessages);
   const [localChannelMessages, setLocalChannelMessages] = useState(channelMessages);
 
-  // Update local state when props change - with deep comparison
+  // Update local state when props change
   useEffect(() => {
-    if (JSON.stringify(localEmails) !== JSON.stringify(emails)) {
-      setLocalEmails(emails);
-    }
+    setLocalEmails(emails);
   }, [emails]);
 
   useEffect(() => {
-    if (JSON.stringify(localTeamsMessages) !== JSON.stringify(teamsMessages)) {
-      setLocalTeamsMessages(teamsMessages);
-    }
+    setLocalTeamsMessages(teamsMessages);
   }, [teamsMessages]);
 
   useEffect(() => {
-    if (JSON.stringify(localChannelMessages) !== JSON.stringify(channelMessages)) {
-      setLocalChannelMessages(channelMessages);
-    }
+    setLocalChannelMessages(channelMessages);
   }, [channelMessages]);
 
   // Convert different notification types to a unified format

@@ -55,16 +55,12 @@ const navigation: NavItem[] = [
     icon: Sparkles,
     children: [
       {
-        title: "Chat",
-        href: "/ai-services/chat",
-        icon: MessageSquare,
-      },
-      {
         title: "Transcription",
         href: "/ai-services/transcription",
         icon: FileAudio,
       },
       { title: "Email", href: "/ai-services/email", icon: Mail },
+      { title: "AI News", href: "/ai-services/ai-news", icon: Newspaper },
     ],
   },
   { title: "Settings", href: "/settings", icon: Settings },
@@ -111,34 +107,6 @@ export function AppSidebar() {
         prev.includes("/ai-services") ? prev : [...prev, "/ai-services"]
       );
     }
-  }, [pathname]);
-
-  // Load sidebar collapsed state from localStorage on mount
-  useEffect(() => {
-    const storedState = localStorage.getItem("sidebar-collapsed");
-    if (storedState !== null) {
-      setIsCollapsed(storedState === "true");
-    }
-  }, []);
-
-  // Save collapsed state to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem("sidebar-collapsed", isCollapsed.toString());
-  }, [isCollapsed]);
-
-  // Toggle collapsed state
-  const toggleCollapsed = () => {
-    setIsCollapsed(!isCollapsed);
-  };
-
-  // Toggle mobile menu
-  const toggleMobileMenu = () => {
-    setIsMobileMenuOpen(!isMobileMenuOpen);
-  };
-
-  // Close mobile menu on navigation (for small screens)
-  useEffect(() => {
-    setIsMobileMenuOpen(false);
   }, [pathname]);
 
   // Toggle expanded state for navigation items with children

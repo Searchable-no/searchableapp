@@ -43,18 +43,16 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning className={inter.variable}>
-      <body
-        className={`${inter.className} antialiased h-screen overflow-hidden`}
-      >
+      <body className={`${inter.className} antialiased`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"
           enableSystem={false}
           disableTransitionOnChange
         >
-          <div className="flex h-screen max-h-screen">
+          <div className="flex min-h-screen">
             {session && <AppSidebar />}
-            <div className="flex-1 overflow-hidden w-full">{children}</div>
+            <div className="flex-1 overflow-auto w-full">{children}</div>
           </div>
           <Toaster />
         </ThemeProvider>
