@@ -364,29 +364,8 @@ export default function Chat({
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-white">
-      {/* Header */}
-      {headerComponent || (
-        <header className="flex justify-between items-center p-4 border-b">
-          <div className="flex items-center">
-            <Select defaultValue="all">
-              <SelectTrigger className="w-[70px] border-none shadow-none focus:ring-0">
-                <SelectValue placeholder="All" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="recent">Recent</SelectItem>
-                <SelectItem value="saved">Saved</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" className="text-black hover:bg-gray-100">
-              Help
-            </Button>
-            <div className="w-6 h-6 border border-gray-300 rounded"></div>
-          </div>
-        </header>
-      )}
+      {/* Header - Only show if custom header provided */}
+      {headerComponent}
 
       {/* Messages area - Takes available space */}
       <div className="flex-1 overflow-y-auto p-4">
