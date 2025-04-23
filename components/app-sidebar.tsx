@@ -23,13 +23,21 @@ import {
   Newspaper,
   ChevronsLeft,
   ChevronsRight,
+  Building2,
 } from "lucide-react";
 import { useSession } from "@/lib/session";
 import { useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { OrganizationSelector } from "@/components/OrganizationSelector";
+import { useOrganization } from "@/contexts/OrganizationContext";
 
 type NavItemChild = {
   title: string;
@@ -83,6 +91,7 @@ export function AppSidebar() {
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<boolean>(false);
   const supabase = createClientComponentClient();
+  const { currentOrganization } = useOrganization();
 
   // Load collapsed state from localStorage on mount
   useEffect(() => {
@@ -208,7 +217,7 @@ export function AppSidebar() {
 
   return (
     <TooltipProvider>
-      <div 
+      <div
         className={cn(
           "flex h-full flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out relative",
           collapsed ? "w-[60px]" : "w-[220px]"
@@ -227,12 +236,14 @@ export function AppSidebar() {
             <ChevronsLeft className="h-3 w-3 text-sidebar-foreground/60" />
           )}
         </Button>
-      
+
         {/* Header with user info */}
-        <div className={cn(
-          "flex items-center gap-2 p-4 border-b border-sidebar-border overflow-hidden",
-          collapsed && "justify-center"
-        )}>
+        <div
+          className={cn(
+            "flex items-center gap-2 p-4 border-b border-sidebar-border overflow-hidden",
+            collapsed && "justify-center"
+          )}
+        >
           <div className="relative h-8 w-8 overflow-hidden rounded-lg bg-gradient-to-br from-primary/20 to-primary/10 flex-shrink-0">
             <img
               src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/Searchable-oEMTymeOqXxqDzlBGz8NHto1b6GOs0.png"
@@ -252,8 +263,35 @@ export function AppSidebar() {
           )}
         </div>
 
+        {/* Organization Selector */}
+        {!collapsed ? (
+          <div className="px-3 py-3 border-b border-sidebar-border">
+            <OrganizationSelector />
+          </div>
+        ) : (
+          <div className="px-2 py-3 border-b border-sidebar-border">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => router.push("/settings/organizations")}
+                >
+                  <Building2 className="h-4 w-4 text-sidebar-foreground/60" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">
+                {currentOrganization?.name || "Velg organisasjon"}
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+
         {/* Navigation Links */}
-        <nav className={cn("flex-1 space-y-0.5 p-3", collapsed && "items-center")}>
+        <nav
+          className={cn("flex-1 space-y-0.5 p-3", collapsed && "items-center")}
+        >
           {navItems.map((item) => {
             const isActive =
               pathname === item.href || pathname.startsWith(item.href + "/");
@@ -323,7 +361,10 @@ export function AppSidebar() {
               );
             } else {
               return (
-                <Tooltip key={item.href} delayDuration={collapsed ? 300 : 999999}>
+                <Tooltip
+                  key={item.href}
+                  delayDuration={collapsed ? 300 : 999999}
+                >
                   <TooltipTrigger asChild>
                     <Link
                       href={item.href}
@@ -358,10 +399,12 @@ export function AppSidebar() {
         </nav>
 
         {/* Footer with theme toggle and logout */}
-        <div className={cn(
-          "border-t border-sidebar-border p-3 space-y-0.5",
-          collapsed && "flex flex-col items-center"
-        )}>
+        <div
+          className={cn(
+            "border-t border-sidebar-border p-3 space-y-0.5",
+            collapsed && "flex flex-col items-center"
+          )}
+        >
           {mounted && (
             <Tooltip delayDuration={collapsed ? 300 : 999999}>
               <TooltipTrigger asChild>
@@ -384,7 +427,8 @@ export function AppSidebar() {
                   ) : (
                     <Sun className="h-4 w-4 text-sidebar-foreground/60" />
                   )}
-                  {!collapsed && (theme === "light" ? "Dark mode" : "Light mode")}
+                  {!collapsed &&
+                    (theme === "light" ? "Dark mode" : "Light mode")}
                 </button>
               </TooltipTrigger>
               {collapsed && (

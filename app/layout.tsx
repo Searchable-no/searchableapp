@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import "./globals.css";
+import { OrganizationProvider } from "@/contexts/OrganizationContext";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -50,11 +51,13 @@ export default async function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
         >
-          <div className="flex min-h-screen">
-            {session && <AppSidebar />}
-            <div className="flex-1 overflow-auto w-full">{children}</div>
-          </div>
-          <Toaster />
+          <OrganizationProvider>
+            <div className="flex min-h-screen">
+              {session && <AppSidebar />}
+              <div className="flex-1 overflow-auto w-full">{children}</div>
+            </div>
+            <Toaster />
+          </OrganizationProvider>
         </ThemeProvider>
       </body>
     </html>

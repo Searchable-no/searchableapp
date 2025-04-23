@@ -5,14 +5,74 @@ export type ResourceType = 'sharepoint' | 'teams' | 'planner'
 // New project-related types
 export type ProjectColumnType = 'text' | 'number' | 'date' | 'select' | 'multiselect' | 'user' | 'team' | 'boolean'
 
+// Nye organisasjonsrelaterte typer
+export type OrganizationRole = 'owner' | 'admin' | 'member' | 'guest'
+
 export interface Database {
   public: {
     Tables: {
+      // Nye organisasjonstabeller
+      organizations: {
+        Row: {
+          id: string
+          name: string
+          slug: string
+          ms_tenant_id?: string
+          settings: Record<string, unknown>
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          slug: string
+          ms_tenant_id?: string
+          settings?: Record<string, unknown>
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          slug?: string
+          ms_tenant_id?: string
+          settings?: Record<string, unknown>
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      organization_members: {
+        Row: {
+          id: string
+          organization_id: string
+          user_id: string
+          role: OrganizationRole
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          user_id: string
+          role: OrganizationRole
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          user_id?: string
+          role?: OrganizationRole
+          created_at?: string
+          updated_at?: string
+        }
+      }
       workspaces: {
         Row: {
           id: string
           name: string
           user_id: string
+          organization_id?: string // Oppdatert
           created_at: string
           updated_at: string
         }
@@ -20,6 +80,7 @@ export interface Database {
           id?: string
           name: string
           user_id: string
+          organization_id?: string // Oppdatert
           created_at?: string
           updated_at?: string
         }
@@ -27,6 +88,7 @@ export interface Database {
           id?: string
           name?: string
           user_id?: string
+          organization_id?: string // Oppdatert
           created_at?: string
           updated_at?: string
         }
@@ -208,7 +270,7 @@ export interface Database {
         Row: {
           id: string
           project_id: string
-          values: Record<string, any> // Maps column ID to value
+          values: Record<string, unknown> // Maps column ID to value
           created_by: string
           created_at: string
           updated_at: string
@@ -216,7 +278,7 @@ export interface Database {
         Insert: {
           id?: string
           project_id: string
-          values: Record<string, any>
+          values: Record<string, unknown>
           created_by: string
           created_at?: string
           updated_at?: string
@@ -224,7 +286,7 @@ export interface Database {
         Update: {
           id?: string
           project_id?: string
-          values?: Record<string, any>
+          values?: Record<string, unknown>
           created_by?: string
           created_at?: string
           updated_at?: string
